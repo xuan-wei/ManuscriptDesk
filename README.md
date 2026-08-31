@@ -19,17 +19,17 @@ python scripts/init_deployment.py /srv/manuscript-desk \
   --public-base-url https://desk.example.com \
   --admin-email admin@example.com
 
-cd /srv/manuscript-desk/deployment
+cd /srv/manuscript-desk
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 ```
 
-The initializer generates three independent application keys and a strong one-time administrator password. Read the credentials from `/srv/manuscript-desk/deployment/bootstrap.txt`, log in, and then remove all bootstrap material:
+The initializer generates three independent application keys and a strong one-time administrator password. Read the credentials from `/srv/manuscript-desk/bootstrap.txt`, log in, and then remove all bootstrap material:
 
 ```bash
 python /path/to/ManuscriptDesk/scripts/finalize_bootstrap.py /srv/manuscript-desk
-cd /srv/manuscript-desk/deployment
+cd /srv/manuscript-desk
 docker compose up -d
 ```
 
@@ -46,12 +46,13 @@ Recommended layout:
 ```text
 ManuscriptDesk/             # public source checkout
 /srv/manuscript-desk/
-├── deployment/             # private Compose and environment files
-├── state/                  # database, SecretStore, and long-term keys
+├── compose.yml             # private Compose configuration
+├── production.env          # private environment settings
+├── data/                   # database, SecretStore, and long-term keys
 └── backups/                # paired database + SecretStore backups
 ```
 
-Only the source checkout belongs in Git. The initializer refuses to create state inside its Git worktree and refuses to overwrite a nonempty deployment directory.
+Only the source checkout belongs in Git. The initializer refuses to create state inside its Git worktree and refuses to overwrite a nonempty deployment root.
 
 ## Development
 

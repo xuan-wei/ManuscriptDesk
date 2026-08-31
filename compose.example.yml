@@ -9,14 +9,14 @@ services:
       - /bin/sh
       - -c
       - >-
-        mkdir -p /managed-state/runtime /managed-state/secrets/data /managed-state/secrets/keys /managed-state/bootstrap /managed-backups &&
-        chown -R 10001:10001 /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups &&
-        chmod 0711 /managed-state &&
-        find /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups -type d -exec chmod 0700 {} + &&
-        find /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups -type f -exec chmod 0600 {} +
+        mkdir -p /managed-data/runtime /managed-data/secrets/data /managed-data/secrets/keys /managed-data/secrets/bootstrap /managed-backups &&
+        chown -R 10001:10001 /managed-data/runtime /managed-data/secrets /managed-backups &&
+        chmod 0711 /managed-data &&
+        find /managed-data/runtime /managed-data/secrets /managed-backups -type d -exec chmod 0700 {} + &&
+        find /managed-data/runtime /managed-data/secrets /managed-backups -type f -exec chmod 0600 {} +
     volumes:
-      - ../state:/managed-state
-      - ../backups:/managed-backups
+      - ./data:/managed-data
+      - ./backups:/managed-backups
     network_mode: none
     read_only: true
     cap_drop: ["ALL"]
@@ -49,10 +49,10 @@ services:
       HOME: /home/manuscript-desk
       XDG_CACHE_HOME: /tmp/manuscript-desk-cache
     volumes:
-      - ../state/runtime:/runtime
-      - ../state/secrets/data:/run/manuscript-desk-secrets/data
-      - ../state/secrets/keys:/run/manuscript-desk-keys:ro
-      - ../state/bootstrap/initial-admin-password:/run/manuscript-desk-bootstrap/initial-admin-password:ro
+      - ./data/runtime:/runtime
+      - ./data/secrets/data:/run/manuscript-desk-secrets/data
+      - ./data/secrets/keys:/run/manuscript-desk-keys:ro
+      - ./data/secrets/bootstrap/initial-admin-password:/run/manuscript-desk-bootstrap/initial-admin-password:ro
     ports:
       - "${MANUSCRIPT_DESK_LISTEN_ADDRESS:-127.0.0.1}:${MANUSCRIPT_DESK_PORT:-8008}:8008"
     shm_size: 2gb

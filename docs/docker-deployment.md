@@ -27,24 +27,24 @@ The command creates:
 
 ```text
 /srv/manuscript-desk/
-├── deployment/
-│   ├── compose.yml
-│   ├── production.env
-│   └── bootstrap.txt
-├── state/
+├── compose.yml
+├── production.env
+├── bootstrap.txt
+├── data/
 │   ├── runtime/
-│   ├── secrets/data/
-│   ├── secrets/keys/{otp.key,rate.key,captcha.key}
-│   └── bootstrap/initial-admin-password
+│   └── secrets/
+│       ├── data/
+│       ├── keys/{otp.key,rate.key,captcha.key}
+│       └── bootstrap/initial-admin-password
 └── backups/
 ```
 
-Each key is independently generated. Private files use mode `0600`; sensitive directories use `0700`. The `state/` boundary itself is traversal-only (`0711`) so the host operator can reach the separately protected runtime and backup paths without being able to list state contents. The plaintext bootstrap password exists only in the private deployment tree and must be deleted after first login.
+Each key is independently generated. Private files use mode `0600`; sensitive directories use `0700`. The `data/` boundary itself is traversal-only (`0711`), while the deployment root remains private. The plaintext bootstrap password exists in the private root record and mounted bootstrap file only until first-login finalization.
 
 ## Validate and start
 
 ```bash
-cd /srv/manuscript-desk/deployment
+cd /srv/manuscript-desk
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
@@ -57,11 +57,11 @@ For production, configure HTTPS first and browse to the exact origin supplied as
 
 ## Complete first boot
 
-Read `/srv/manuscript-desk/deployment/bootstrap.txt`, sign in, and confirm the administrator account works. Then run:
+Read `/srv/manuscript-desk/bootstrap.txt`, sign in, and confirm the administrator account works. Then run:
 
 ```bash
 python /path/to/source/scripts/finalize_bootstrap.py /srv/manuscript-desk
-cd /srv/manuscript-desk/deployment
+cd /srv/manuscript-desk
 docker compose config --quiet
 docker compose up -d
 ```

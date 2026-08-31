@@ -29,6 +29,9 @@
 **/*.pem
 **/secrets/**
 **/runtime/**
+**/data/**
+**/production.env
+**/bootstrap.txt
 **/production/**
 **/staging/**
 **/migration/**

@@ -7,12 +7,12 @@ Never copy a live SQLite database file directly. SQLite may be using WAL mode; u
 ## Create a backup
 
 ```bash
-cd /srv/manuscript-desk/deployment
+cd /srv/manuscript-desk
 docker compose stop manuscript-desk
 docker run --rm \
   --user "$(id -u):$(id -g)" \
-  -v /srv/manuscript-desk/state/runtime:/runtime \
-  -v /srv/manuscript-desk/state/secrets/data:/secrets:ro \
+  -v /srv/manuscript-desk/data/runtime:/runtime \
+  -v /srv/manuscript-desk/data/secrets/data:/secrets:ro \
   -v /srv/manuscript-desk/backups:/backups \
   -v /path/to/source/scripts/backup_state.py:/backup_state.py:ro \
   manuscript-desk:local python /backup_state.py \
@@ -32,14 +32,14 @@ The script:
 - rejects SecretStore symlinks, unsupported file types, and broadly readable secret files;
 - writes SHA-256 values and schema metadata to a private manifest.
 
-Separately back up `/srv/manuscript-desk/state/secrets/keys` using an encrypted, access-controlled system. Do not put keys or backups in Git.
+Separately back up `/srv/manuscript-desk/data/secrets/keys` using an encrypted, access-controlled system. Do not put keys or backups in Git.
 
 ## Restore rehearsal
 
 1. Stop any service that would write to the restore destination.
 2. Create a new, empty private deployment directory on a separate localhost port.
-3. Copy `manuscripts.db` from one backup directory into its `state/runtime/` directory.
-4. Copy that same backup directory's `secrets/` tree into `state/secrets/data/`.
+3. Copy `manuscripts.db` from one backup directory into its `data/runtime/` directory.
+4. Copy that same backup directory's `secrets/` tree into `data/secrets/data/`.
 5. Install the matching long-term keys for that state set.
 6. Set ownership to `10001:10001`, directories to `0700`, and private files to `0600`.
 7. Keep `MANUSCRIPT_DESK_CREATE_EMPTY_DB=0`.

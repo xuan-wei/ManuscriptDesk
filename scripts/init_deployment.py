@@ -25,14 +25,14 @@ COMPOSE = """services:
       - /bin/sh
       - -c
       - >-
-        mkdir -p /managed-state/runtime /managed-state/secrets/data /managed-state/secrets/keys /managed-state/bootstrap /managed-backups &&
-        chown -R 10001:10001 /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups &&
-        chmod 0711 /managed-state &&
-        find /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups -type d -exec chmod 0700 {{}} + &&
-        find /managed-state/runtime /managed-state/secrets /managed-state/bootstrap /managed-backups -type f -exec chmod 0600 {{}} +
+        mkdir -p /managed-data/runtime /managed-data/secrets/data /managed-data/secrets/keys /managed-data/secrets/bootstrap /managed-backups &&
+        chown -R 10001:10001 /managed-data/runtime /managed-data/secrets /managed-backups &&
+        chmod 0711 /managed-data &&
+        find /managed-data/runtime /managed-data/secrets /managed-backups -type d -exec chmod 0700 {{}} + &&
+        find /managed-data/runtime /managed-data/secrets /managed-backups -type f -exec chmod 0600 {{}} +
     volumes:
-      - ../state:/managed-state
-      - ../backups:/managed-backups
+      - ./data:/managed-data
+      - ./backups:/managed-backups
     network_mode: none
     read_only: true
     cap_drop: ["ALL"]
@@ -63,10 +63,10 @@ COMPOSE = """services:
       HOME: /home/manuscript-desk
       XDG_CACHE_HOME: /tmp/manuscript-desk-cache
     volumes:
-      - ../state/runtime:/runtime
-      - ../state/secrets/data:/run/manuscript-desk-secrets/data
-      - ../state/secrets/keys:/run/manuscript-desk-keys:ro
-      - ../state/bootstrap/initial-admin-password:/run/manuscript-desk-bootstrap/initial-admin-password:ro
+      - ./data/runtime:/runtime
+      - ./data/secrets/data:/run/manuscript-desk-secrets/data
+      - ./data/secrets/keys:/run/manuscript-desk-keys:ro
+      - ./data/secrets/bootstrap/initial-admin-password:/run/manuscript-desk-bootstrap/initial-admin-password:ro
     ports:
       - "${{MANUSCRIPT_DESK_LISTEN_ADDRESS:-127.0.0.1}}:${{MANUSCRIPT_DESK_PORT:-8008}}:8008"
     shm_size: 2gb
@@ -147,15 +147,14 @@ def validate_public_base_url(value: str) -> str:
 
 
 def secure_state_ownership(target: Path) -> bool:
-    state = target / "state"
+    data = target / "data"
     managed = [
-        state / "runtime",
-        state / "secrets",
-        state / "bootstrap",
+        data / "runtime",
+        data / "secrets",
         target / "backups",
     ]
     try:
-        os.chmod(state, 0o711)
+        os.chmod(data, 0o711)
         for root in managed:
             for path in [root, *sorted(root.rglob("*"))]:
                 os.chown(path, CONTAINER_UID, CONTAINER_GID)
@@ -186,28 +185,27 @@ def main() -> int:
 
     paths = [
         target,
-        target / "deployment",
-        target / "state",
-        target / "state/runtime",
-        target / "state/secrets",
-        target / "state/secrets/data",
-        target / "state/secrets/keys",
-        target / "state/bootstrap",
+        target / "data",
+        target / "data/runtime",
+        target / "data/secrets",
+        target / "data/secrets/data",
+        target / "data/secrets/keys",
+        target / "data/secrets/bootstrap",
         target / "backups",
     ]
     for path in paths:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(path, 0o700)
 
-    keys = target / "state/secrets/keys"
+    keys = target / "data/secrets/keys"
     for name in ("otp.key", "rate.key", "captcha.key"):
         write_private(keys / name, secrets.token_urlsafe(48) + "\n")
     initial_password = secrets.token_urlsafe(30)
-    write_private(target / "state/bootstrap/initial-admin-password", initial_password + "\n")
+    write_private(target / "data/secrets/bootstrap/initial-admin-password", initial_password + "\n")
 
     cookie_secure = "0" if public_base_url.startswith("http://") else "1"
     write_private(
-        target / "deployment/production.env",
+        target / "production.env",
         ENVIRONMENT.format(
             public_base_url=public_base_url,
             cookie_secure=cookie_secure,
@@ -215,9 +213,9 @@ def main() -> int:
             admin_email=admin_email,
         ),
     )
-    write_private(target / "deployment/compose.yml", COMPOSE.format(source_root=source.as_posix()))
+    write_private(target / "compose.yml", COMPOSE.format(source_root=source.as_posix()))
     write_private(
-        target / "deployment/bootstrap.txt",
+        target / "bootstrap.txt",
         (
             f"Initial administrator: {admin_username} ({admin_email})\n"
             f"Initial password: {initial_password}\n"
@@ -228,12 +226,12 @@ def main() -> int:
     ownership_ready = secure_state_ownership(target)
     print("Deployment files created.")
     print(f"Directory: {target}")
-    print(f"Bootstrap credentials: {target / 'deployment/bootstrap.txt'}")
+    print(f"Bootstrap credentials: {target / 'bootstrap.txt'}")
     if not ownership_ready:
         print("Container state ownership will be prepared automatically on startup.")
     print()
     print("Validate and start Manuscript Desk:")
-    print(f"  cd '{target / 'deployment'}'")
+    print(f"  cd '{target}'")
     print("  docker compose config --quiet")
     print("  docker compose up -d --build")
     print("  docker compose ps")

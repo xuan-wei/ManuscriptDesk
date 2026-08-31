@@ -13,7 +13,7 @@ Manuscript Desk reads configuration from environment variables. Keep the real en
 
 ## First installation
 
-Set `MANUSCRIPT_DESK_CREATE_EMPTY_DB=1` only for an empty state directory. Configure all three initial administrator values together. Prefer a password file. After the account is created and the first login succeeds, remove the bootstrap variables and password file from the deployment.
+Set `MANUSCRIPT_DESK_CREATE_EMPTY_DB=1` only for an empty data directory. Configure all three initial administrator values together. Prefer a password file. After the account is created and the first login succeeds, run `scripts/finalize_bootstrap.py` to clean the root-level bootstrap record and `data/secrets/bootstrap` password file.
 
 ## Worker constraint
 

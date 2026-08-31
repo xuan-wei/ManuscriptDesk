@@ -14,6 +14,7 @@ DISALLOWED_PARTS = {
     "backups",
     "browser-profiles",
     "cutover",
+    "data",
     "logs",
     "migration",
     "production",

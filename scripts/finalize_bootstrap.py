@@ -14,7 +14,7 @@ BOOTSTRAP_ENV_PREFIXES = (
 )
 BOOTSTRAP_COMPOSE_LINES = (
     "MANUSCRIPT_DESK_INITIAL_ADMIN_PASSWORD_FILE:",
-    "../state/bootstrap/initial-admin-password:",
+    "./data/secrets/bootstrap/initial-admin-password:",
 )
 
 
@@ -38,9 +38,9 @@ def main() -> int:
     args = parser.parse_args()
 
     target = args.directory.expanduser().resolve()
-    env_path = target / "deployment/production.env"
-    compose_path = target / "deployment/compose.yml"
-    bootstrap_record = target / "deployment/bootstrap.txt"
+    env_path = target / "production.env"
+    compose_path = target / "compose.yml"
+    bootstrap_record = target / "bootstrap.txt"
     if not env_path.is_file() or not compose_path.is_file():
         raise SystemExit("Deployment files were not found")
 
@@ -73,7 +73,7 @@ def main() -> int:
             "--cap-add",
             "DAC_OVERRIDE",
             "-v",
-            f"{target / 'state/bootstrap'}:/bootstrap",
+            f"{target / 'data/secrets/bootstrap'}:/bootstrap",
             "python:3.12-slim-bookworm",
             "rm",
             "-f",
@@ -84,17 +84,17 @@ def main() -> int:
     if completed.returncode != 0:
         raise SystemExit(
             "Bootstrap configuration was disabled, but the password file could not be deleted. "
-            "Remove state/bootstrap/initial-admin-password before restarting."
+            "Remove data/secrets/bootstrap/initial-admin-password before restarting."
         )
     bootstrap_record.unlink(missing_ok=True)
-    bootstrap_directory = target / "state/bootstrap"
+    bootstrap_directory = target / "data/secrets/bootstrap"
     try:
         bootstrap_directory.rmdir()
     except OSError:
         pass
 
     print("Bootstrap credentials removed.")
-    print(f"Recreate the service: cd '{target / 'deployment'}' && docker compose up -d")
+    print(f"Recreate the service: cd '{target}' && docker compose up -d")
     return 0
 
 

@@ -38,6 +38,7 @@ secret-store/
 *.sqlite-shm
 runtime/
 state/
+data/
 production/
 staging/
 migration/
@@ -49,5 +50,7 @@ browser-profiles/
 screenshots/
 
 # Local deployment overrides
+production.env
+bootstrap.txt
 compose.yml
 docker-compose.yml

@@ -33,27 +33,42 @@ def test_initializer_creates_external_private_deployment(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
 
-    production_env = target / "deployment/production.env"
-    compose = target / "deployment/compose.yml"
-    bootstrap = target / "deployment/bootstrap.txt"
+    production_env = target / "production.env"
+    compose = target / "compose.yml"
+    bootstrap = target / "bootstrap.txt"
     assert production_env.is_file()
     assert compose.is_file()
     assert bootstrap.is_file()
     assert "MANUSCRIPT_DESK_CREATE_EMPTY_DB=1" in production_env.read_text()
-    assert SOURCE_ROOT.as_posix() in compose.read_text()
-    assert "10001:10001" in compose.read_text()
+    compose_text = compose.read_text()
+    assert SOURCE_ROOT.as_posix() in compose_text
+    assert "10001:10001" in compose_text
+    assert "./data/runtime:/runtime" in compose_text
+    assert "./backups:/managed-backups" in compose_text
+    assert "../state" not in compose_text
+    assert "../backups" not in compose_text
     assert "Initial password:" in bootstrap.read_text()
 
     private_files = [
         production_env,
         compose,
         bootstrap,
-        target / "state/secrets/keys/otp.key",
-        target / "state/secrets/keys/rate.key",
-        target / "state/secrets/keys/captcha.key",
-        target / "state/bootstrap/initial-admin-password",
+        target / "data/secrets/keys/otp.key",
+        target / "data/secrets/keys/rate.key",
+        target / "data/secrets/keys/captcha.key",
+        target / "data/secrets/bootstrap/initial-admin-password",
     ]
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in private_files)
+    assert (target / "data").stat().st_mode & 0o777 == 0o711
+    for directory in (
+        target / "data/runtime",
+        target / "data/secrets",
+        target / "data/secrets/data",
+        target / "data/secrets/keys",
+        target / "data/secrets/bootstrap",
+        target / "backups",
+    ):
+        assert directory.stat().st_mode & 0o777 == 0o700
     for key in private_files[3:6]:
         assert len(key.read_bytes().strip()) >= 32
 
@@ -116,11 +131,11 @@ def test_finalize_bootstrap_removes_plaintext_and_disables_creation(tmp_path):
 
     completed = run_script(FINALIZE, target)
     assert completed.returncode == 0, completed.stderr
-    environment = (target / "deployment/production.env").read_text()
-    compose = (target / "deployment/compose.yml").read_text()
+    environment = (target / "production.env").read_text()
+    compose = (target / "compose.yml").read_text()
     assert "MANUSCRIPT_DESK_CREATE_EMPTY_DB=0" in environment
     assert "MANUSCRIPT_DESK_INITIAL_ADMIN_" not in environment
     assert "INITIAL_ADMIN_PASSWORD_FILE" not in compose
-    assert "state/bootstrap/initial-admin-password" not in compose
-    assert not (target / "deployment/bootstrap.txt").exists()
-    assert not (target / "state/bootstrap/initial-admin-password").exists()
+    assert "data/secrets/bootstrap/initial-admin-password" not in compose
+    assert not (target / "bootstrap.txt").exists()
+    assert not (target / "data/secrets/bootstrap/initial-admin-password").exists()
