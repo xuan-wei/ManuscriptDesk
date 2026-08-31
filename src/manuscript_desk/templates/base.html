@@ -1,0 +1,85 @@
+{% from "_macros.html" import icon, nav_link, csrf_input %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <meta name="csrf-token" content="{{ csrf_token | default('', true) }}">
+  <link rel="stylesheet" href="/static/ui/shell.css">
+  <link rel="stylesheet" href="/static/ui/account.css">
+  {% block head %}{% endblock %}
+</head>
+<body class="app-body {% block body_class %}{% endblock %}">
+  <a class="app-skip-link" href="#app-main">跳到主要内容</a>
+  <div class="app-mobile-bar">
+    <button class="app-menu-button" type="button" data-sidebar-open aria-expanded="false" aria-controls="app-sidebar" aria-label="打开导航菜单">{{ icon('menu') }}</button>
+    <a class="app-mobile-brand" href="{{ '/admin/users' if current_user and current_user.is_admin else '/' }}">Manuscript <span>Desk</span></a>
+  </div>
+  <div class="app-backdrop" data-sidebar-backdrop hidden></div>
+  <aside class="app-sidebar" id="app-sidebar" aria-label="主要导航" tabindex="-1">
+    <div class="app-brand-row">
+      <a class="app-brand" href="{{ '/admin/users' if current_user and current_user.is_admin else '/' }}" aria-label="Manuscript Desk 首页"><span class="app-brand-mark">M</span><span>Manuscript<small>DESK</small></span></a>
+      <button class="app-sidebar-close" type="button" data-sidebar-close aria-label="关闭导航菜单">{{ icon('close') }}</button>
+    </div>
+    <nav class="app-navigation">
+      {% if current_user and current_user.is_admin %}
+      <section class="app-nav-group" aria-labelledby="nav-admin-accounts">
+        <h2 id="nav-admin-accounts">账号管理</h2>
+        {{ nav_link(request, '/admin/users', '/admin/users', '用户管理', 'users') }}
+      </section>
+      <section class="app-nav-group" aria-labelledby="nav-admin-system">
+        <h2 id="nav-admin-system">系统</h2>
+        {{ nav_link(request, '/admin/settings', '/admin/settings', '注册与系统 SMTP', 'settings') }}
+        {{ nav_link(request, '/admin/audit', '/admin/audit', '审计记录', 'shield') }}
+        {{ nav_link(request, '/admin/health', '/admin/health', '系统健康', 'activity') }}
+      </section>
+      {% else %}
+      <section class="app-nav-group" aria-labelledby="nav-manuscripts">
+        <h2 id="nav-manuscripts">稿件</h2>
+        {{ nav_link(request, 'manuscripts', '/', '全部稿件', 'papers') }}
+        {{ nav_link(request, 'ongoing', '/?view=ongoing', '进行中', 'clock') }}
+        {{ nav_link(request, 'starred', '/?view=starred', '标星稿件', 'star') }}
+        {{ nav_link(request, 'hidden', '/?view=hidden', '隐藏稿件', 'archive') }}
+      </section>
+      <section class="app-nav-group" aria-labelledby="nav-workflow">
+        <h2 id="nav-workflow">工作流</h2>
+        {{ nav_link(request, '/automation', '/automation', '自动化', 'clock') }}
+        {{ nav_link(request, '/shortcuts', '/shortcuts', '快捷指令', 'link') }}
+        {{ nav_link(request, '/config', '/config', '期刊配置', 'settings') }}
+      </section>
+      <section class="app-nav-group" aria-labelledby="nav-account">
+        <h2 id="nav-account">账号</h2>
+        {{ nav_link(request, '/profile', '/profile', '个人资料', 'user') }}
+      </section>
+      {% endif %}
+    </nav>
+    {% set user_name = current_user.display_name if current_user and current_user.display_name else (current_user.email if current_user else '用户') %}
+    {% set user_email = current_user.email if current_user else '' %}
+    <div class="app-sidebar-footer">
+      <div class="app-user-avatar" aria-hidden="true">{{ user_name[:1] | upper }}</div>
+      <div class="app-user-copy"><strong>{{ user_name }}</strong><span>{{ user_email }}</span></div>
+      <form class="app-logout-form" method="post" action="/logout">
+        {{ csrf_input(csrf_token) }}
+        <button class="app-logout" type="submit" aria-label="退出登录">{{ icon('logout') }}</button>
+      </form>
+    </div>
+  </aside>
+  <div class="app-layout">
+    <main class="app-main" id="app-main" tabindex="-1">
+      <header class="app-page-header">
+        <div class="app-page-copy">
+          {% block eyebrow %}{% endblock %}
+          <h1>{% block page_title %}{% endblock %}</h1>
+          {% block page_description %}{% endblock %}
+        </div>
+        <div class="app-page-actions">{% block page_actions %}{% endblock %}</div>
+      </header>
+      <div class="app-page-content">{% block content %}{% endblock %}</div>
+    </main>
+  </div>
+  <script src="/static/ui/shell.js" defer></script>
+  <script src="/static/ui/account.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,1379 @@
+{% extends "base.html" %}
+{% block title %}稿件 · Manuscript Desk{% endblock %}
+{% block body_class %}page-manuscripts{% endblock %}
+{% block head %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+
+        /* 水平时间轴样式 */
+        .timeline-horizontal {
+            background: #fff;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.08);
+            margin: 20px 0;
+        }
+
+        .timeline-track {
+            display: flex !important;
+            align-items: center !important;
+            overflow-x: auto;
+            padding: 40px 20px;
+            position: relative;
+            min-height: 120px;
+            flex-direction: row !important;
+        }
+
+        .timeline-track::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #e3e6f0 0%, #667eea 50%, #e3e6f0 100%);
+            transform: translateY(-50%);
+            z-index: 1;
+        }
+
+        .timeline-horizontal .timeline-item {
+            position: relative !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            min-width: 160px !important;
+            margin: 0 20px !important;
+            z-index: 2;
+            padding-left: 0 !important;
+            margin-bottom: 0 !important;
+            float: none !important;
+        }
+
+        .timeline-horizontal .timeline-item::before {
+            display: none !important;
+        }
+
+        .timeline-marker {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            box-shadow: 0 0 0 3px #667eea, 0 4px 8px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 3;
+        }
+
+        .timeline-marker:hover {
+            transform: scale(1.3);
+            box-shadow: 0 0 0 4px #667eea, 0 6px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .timeline-content {
+            background: #fff;
+            border: 2px solid #e3e6f0;
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+            min-width: 140px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .timeline-content:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .manuscript-card {
+            border-left: 4px solid #007bff;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .manuscript-card:hover {
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+
+        .decision-badge {
+            font-size: 0.8em;
+            padding: 4px 8px;
+        }
+
+        .filter-section {
+            background: #fff;
+            border: 1px solid #e3e6f0;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.08);
+        }
+
+        .filter-section h5 {
+            color: #5a5c69;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.15);
+        }
+
+        .filter-card {
+            background: #f8f9fc;
+            border: 1px solid #e3e6f0;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: end;
+        }
+
+        .filter-item {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .filter-item label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #5a5c69;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        .btn-filter {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            padding: 10px 20px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-filter:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            color: white;
+        }
+
+        .btn-toggle {
+            background: #e3e6f0;
+            border: 1px solid #d1d3e2;
+            color: #5a5c69;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-toggle.active {
+            background: linear-gradient(135deg, #1cc88a 0%, #13855c 100%);
+            border-color: #13855c;
+            color: white;
+        }
+
+        .form-select, .form-control {
+            border-radius: 8px;
+            border: 1px solid #d1d3e2;
+            padding: 10px 15px;
+        }
+
+        .form-select:focus, .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+
+        .journal-badge {
+            font-size: 0.75em;
+            padding: 4px 8px;
+            border-radius: 12px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-pending { background-color: #ffc107; }
+        .status-review { background-color: #17a2b8; }
+        .status-accept { background-color: #28a745; }
+        .status-reject { background-color: #dc3545; }
+        .status-revise { background-color: #fd7e14; }
+
+        .star-btn {
+            font-size: 1.3em;
+            color: #d1d3e2;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 4px;
+        }
+        .star-btn:hover { color: #ffc107; transform: scale(1.2); }
+        .star-btn.starred { color: #ffc107; }
+        .star-btn.starred:hover { color: #e0a800; }
+
+        .version-badge {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7em;
+        }
+
+        .timeline-version {
+            font-weight: bold;
+            font-size: 1em;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .timeline-date {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-bottom: 3px;
+        }
+
+        .timeline-status {
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .timeline-detailed-status {
+            font-size: 0.75em;
+            color: #6c757d;
+            margin-bottom: 3px;
+        }
+
+        .timeline-se-de {
+            font-size: 0.7em;
+            color: #888;
+            font-style: italic;
+        }
+
+        /* 主要变化样式 */
+        .timeline-item.major-change .timeline-marker {
+            width: 28px;
+            height: 28px;
+            box-shadow: 0 0 0 4px #667eea, 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .timeline-item.major-change .timeline-content {
+            border: 3px solid #667eea;
+            background: linear-gradient(135deg, #f8f9ff 0%, #e8ebff 100%);
+            font-weight: 600;
+        }
+
+        /* 次要变化样式 */
+        .timeline-item.minor-change .timeline-marker {
+            width: 16px;
+            height: 16px;
+            box-shadow: 0 0 0 2px #dee2e6, 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .timeline-item.minor-change .timeline-content {
+            border: 1px solid #dee2e6;
+            background: #f8f9fa;
+        }
+
+        /* 状态颜色 */
+        .status-accept .timeline-marker { background: #28a745; }
+        .status-revision .timeline-marker { background: #ffc107; }
+        .status-reject .timeline-marker { background: #dc3545; }
+        .status-reject-resubmit .timeline-marker { background: #fd7e14; }
+        .status-under-review .timeline-marker { background: #17a2b8; }
+        .status-draft .timeline-marker { background: #6c757d; }
+
+        /* 时间轴卡片样式 */
+        .timeline-cards {
+            padding: 15px;
+        }
+
+        .timeline-card-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .timeline-card-content {
+            background: #fff;
+            border: 1px solid #e3e6f0;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .timeline-card-item.major-change .timeline-card-content {
+            border-left: 4px solid #667eea;
+            background: linear-gradient(135deg, #f8f9ff 0%, #ffffff 100%);
+        }
+
+        .timeline-card-item.minor-change .timeline-card-content {
+            border-left: 4px solid #dee2e6;
+        }
+
+        .timeline-card-content:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .timeline-card-version {
+            display: flex;
+            align-items: center;
+        }
+
+        .timeline-connector-vertical {
+            position: absolute;
+            left: 50%;
+            bottom: -20px;
+            width: 2px;
+            height: 20px;
+            background: linear-gradient(to bottom, #667eea, #e3e6f0);
+            transform: translateX(-50%);
+        }
+
+        .timeline-card-details {
+            line-height: 1.6;
+        }
+
+        .timeline-card-date {
+            font-size: 0.85em;
+            opacity: 0.8;
+        }
+
+        /* 工具提示样式 */
+        .tooltip {
+            font-size: 0.85em;
+        }
+
+
+        /* ===== 论文进程时间轴（线性比例 + 绝对定位） ===== */
+        .ptl{background:#fff;border-radius:12px;padding:20px 24px;box-shadow:0 .15rem .5rem rgba(0,0,0,.07);margin:16px 0;border:1px solid #e3e6f0}
+        .ptl-head{text-align:center;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid #e3e6f0}
+        .ptl-head h6{color:#5a5c69;font-weight:600;margin:0 0 4px}
+        .ptl-head small{color:#6c757d}
+        .ptl-track{position:relative;padding:0 8px;overflow:hidden}
+        .ptl-line{position:absolute;top:50%;left:8px;right:8px;height:3px;background:linear-gradient(90deg,#667eea,#764ba2);border-radius:2px;transform:translateY(-50%);z-index:1}
+        .ptl-nodes{position:relative;height:220px}
+        .ptl-n{position:absolute;display:flex;flex-direction:column;align-items:center;transform:translateX(-50%);z-index:2;cursor:default}
+        .ptl-n.up{bottom:50%}
+        .ptl-n.dn{top:50%}
+        .ptl-n .dot{width:14px;height:14px;border-radius:50%;border:2.5px solid #fff;box-shadow:0 0 0 2px #667eea,0 2px 4px rgba(0,0,0,.12);flex-shrink:0;z-index:3}
+        .ptl-n.up .dot{order:3}
+        .ptl-n.up .stem{order:2}
+        .ptl-n.up .card{order:1}
+        .ptl-n.dn .dot{order:1}
+        .ptl-n.dn .stem{order:2}
+        .ptl-n.dn .card{order:3}
+        .ptl-n .card{text-align:center;line-height:1.3;padding:3px 5px;width:max-content;max-width:88px;word-break:break-word;background:rgba(255,255,255,.92);border-radius:5px;transition:box-shadow .15s,background .15s,transform .15s;position:relative}
+        .ptl-n .card .ver{font-size:.65em;font-weight:700;color:#667eea;display:block}
+        .ptl-n .card .act{font-size:.7em;font-weight:600;color:#333;display:block}
+        .ptl-n .card .st{font-size:.63em;color:#555;display:block;word-break:break-word}
+        .ptl-n .card .dt{font-size:.62em;color:#888;display:block;margin-top:1px}
+        .ptl-n .card .gap{font-size:.58em;color:#aaa;display:block;margin-top:1px}
+        .ptl-n .stem{width:2px;background:#c5cae9;flex:0 0 12px;transition:background .15s,width .15s}
+        .ptl-n:hover{z-index:20}
+        .ptl-n:hover .card{background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.22);border-radius:6px}
+        .ptl-n:hover .stem{background:#e74c3c;width:3px}
+        .ptl-n:hover .dot{box-shadow:0 0 0 3px #e74c3c,0 2px 6px rgba(231,76,60,.4);border-color:#fff;transition:box-shadow .15s}
+        .ptl-n.st-accept .dot{background:#28a745;box-shadow:0 0 0 2px #1e7e34,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.st-revision .dot{background:#ffc107;box-shadow:0 0 0 2px #e6ac00,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.st-reject .dot{background:#dc3545;box-shadow:0 0 0 2px #bd2130,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.st-reject-resubmit .dot{background:#fd7e14;box-shadow:0 0 0 2px #e96b02,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.ev-submitted .dot{background:#dc3545;box-shadow:0 0 0 2px #bd2130,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.ev-decision .dot{background:#28a745;box-shadow:0 0 0 2px #1e7e34,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.ev-status .dot{background:#6c757d;box-shadow:0 0 0 2px #545b62,0 2px 4px rgba(0,0,0,.12)}
+        .ptl-n.ev-status .card{opacity:.7}
+
+        /* 更新状态条 */
+        #updateStatusBar {
+            display: none;
+            border-radius: 10px;
+            padding: 10px 18px;
+            font-size: 0.9rem;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+        }
+        #updateStatusBar.running {
+            display: flex;
+            background: linear-gradient(135deg, #e8f4fd, #d0e9f9);
+            border: 1px solid #90cdf4;
+            color: #2b6cb0;
+        }
+        #updateStatusBar.success {
+            display: flex;
+            background: linear-gradient(135deg, #f0fff4, #c6f6d5);
+            border: 1px solid #9ae6b4;
+            color: #276749;
+        }
+        #updateStatusBar.failure {
+            display: flex;
+            background: linear-gradient(135deg, #fff5f5, #fed7d7);
+            border: 1px solid #fc8181;
+            color: #9b2c2c;
+        }
+        #updateStatusBar .spinner-border { width: 1em; height: 1em; border-width: 2px; }
+        .last-update-text { font-size: 0.78rem; color: #a0aec0; margin-left: 6px; }
+
+.page-manuscripts .filter-section{background:var(--app-surface);border-color:var(--app-border-soft);box-shadow:var(--app-shadow);margin-bottom:0}.page-manuscripts .stats-card{background:linear-gradient(135deg,#465bb5,#7358ad);box-shadow:var(--app-shadow);padding:18px 28px}.page-manuscripts .stats-card h5{margin:0 0 16px;white-space:nowrap}.page-manuscripts .stats-grid{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:12px;text-align:left}.page-manuscripts .stats-item{display:flex;align-items:center;justify-content:center;gap:11px;min-height:64px;padding:9px 12px;border-radius:13px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.13)}.page-manuscripts .stats-icon{width:39px;height:39px;display:grid;place-items:center;flex:0 0 39px;border-radius:11px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);font-size:16px}.page-manuscripts .stats-icon-accept{color:#c8f7dc}.page-manuscripts .stats-icon-review{color:#d9edff}.page-manuscripts .stats-icon-revision{color:#ffe5ae}.page-manuscripts .stats-icon-new{color:#ffd2d2}.page-manuscripts .stats-item .h4{line-height:1}.page-manuscripts .stats-item small{white-space:nowrap}.page-manuscripts .stage-filter-row{display:flex;gap:8px;flex-wrap:wrap}.page-manuscripts .filter-scope-control{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.page-manuscripts .filter-scope-label{font-size:13px;font-weight:700;color:var(--app-muted)}.page-manuscripts .filter-scope-switch{display:inline-flex;padding:3px;border:1px solid var(--app-border);border-radius:10px;background:#f5f3ed}.page-manuscripts .filter-scope-option{min-height:34px;padding:6px 12px;border:0;border-radius:7px;background:transparent;color:var(--app-muted);font-size:13px;font-weight:700;cursor:pointer}.page-manuscripts .filter-scope-option.is-active{background:var(--app-surface);color:var(--app-primary);box-shadow:0 1px 4px rgba(31,35,33,.12)}.page-manuscripts .stage-filter{min-height:38px;padding:7px 13px;border:1px solid var(--app-border);border-radius:999px;background:#f5f3ed;color:#555b58;font-size:13px;font-weight:650;cursor:pointer}.page-manuscripts .stage-filter.is-active{background:var(--app-primary);border-color:var(--app-primary);color:#fff}.page-manuscripts .advanced-filters{margin-top:18px;padding-top:18px;border-top:1px solid var(--app-border-soft)}.page-manuscripts .filter-action{flex:0 0 auto;min-width:max-content}.page-manuscripts .filter-action .btn{width:max-content;min-width:96px;white-space:nowrap;word-break:keep-all;display:inline-flex;align-items:center;justify-content:center;gap:7px}.page-manuscripts #manuscriptList{min-height:clamp(360px,52vh,680px);position:relative}.page-manuscripts .manuscript-empty-state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:44px 20px;color:var(--app-muted)}.page-manuscripts .manuscript-empty-state[hidden]{display:none}.page-manuscripts .manuscript-empty-mark{width:62px;height:62px;display:grid;place-items:center;border-radius:18px;background:var(--app-primary-soft);color:var(--app-primary);font-size:23px;margin-bottom:16px}.page-manuscripts .manuscript-empty-state h6{font-size:18px;color:var(--app-text);margin:0 0 7px}.page-manuscripts .manuscript-empty-state p{margin:0 0 18px;max-width:420px}.page-manuscripts .app-page-content>.row:last-of-type>.col-12>.card{border-color:var(--app-border-soft);box-shadow:var(--app-shadow);border-radius:14px;overflow:visible}.page-manuscripts .app-page-content{overflow:visible}.page-manuscripts .ptl-track{overflow-x:auto;overscroll-behavior-inline:contain}.page-manuscripts .modal{z-index:1060}.page-manuscripts .modal-backdrop{z-index:1055}@media(max-width:1100px){.page-manuscripts .stats-card h5{text-align:center}.page-manuscripts .stats-grid{grid-template-columns:repeat(5,1fr)}}@media(max-width:850px){.page-manuscripts .stats-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:700px){.page-manuscripts #manuscriptList{min-height:clamp(320px,48vh,520px)}}@media(max-width:575px){.page-manuscripts .filter-section,.page-manuscripts .stats-card{padding:18px}.page-manuscripts .filter-item{min-width:100%}.page-manuscripts .filter-action{min-width:calc(50% - 8px)}.page-manuscripts .filter-action .btn{width:100%}.page-manuscripts .stats-grid{grid-template-columns:repeat(2,1fr)}.page-manuscripts .stats-item{justify-content:flex-start}.page-manuscripts .stats-icon{width:36px;height:36px;flex-basis:36px}.page-manuscripts .manuscript-empty-state{padding:36px 18px}.page-manuscripts .manuscript-empty-mark{width:54px;height:54px;border-radius:16px}}
+.page-manuscripts .journey-members .card-header{background:#f4f1e9}.page-manuscripts .journey-member{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:12px;align-items:center;cursor:pointer}.page-manuscripts .journey-member:hover{background:var(--app-primary-soft)}.page-manuscripts .journey-member:focus-visible{outline:3px solid rgba(70,91,181,.28);outline-offset:-3px}.page-manuscripts .journey-member.is-hidden{opacity:.65}.page-manuscripts .journey-member-order{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:var(--app-primary-soft);color:var(--app-primary);font-weight:750}.page-manuscripts .journey-member-main{display:grid;gap:3px;min-width:0}.page-manuscripts .journey-member-main strong,.page-manuscripts .journey-member-main small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.page-manuscripts .journey-member-actions,.page-manuscripts .manuscript-card-actions{display:flex;gap:6px;flex-wrap:nowrap}.page-manuscripts .journey-member-timeline{grid-column:1/-1;min-width:0}.page-manuscripts .journey-member-timeline>.card{border-color:var(--app-border-soft);overflow:hidden}.page-manuscripts .journey-member-timeline .card-body{min-width:0;padding:16px}.page-manuscripts .journey-member-timeline .ptl-track{width:100%;max-width:100%}.page-manuscripts .journey-search{position:relative;margin-bottom:10px}.page-manuscripts .journey-search i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--app-muted);pointer-events:none}.page-manuscripts .journey-search input{padding-left:36px}.page-manuscripts .journey-picker{display:grid;gap:7px;max-height:290px;overflow:auto}.page-manuscripts .journey-picker-item{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--app-border-soft);border-radius:10px;cursor:pointer}.page-manuscripts .journey-picker-item span{display:grid}.page-manuscripts .journey-picker-item small{color:var(--app-muted)}.page-manuscripts .journey-search-empty{padding:18px;text-align:center;color:var(--app-muted);border:1px dashed var(--app-border-soft);border-radius:10px}.page-manuscripts .journey-order-list{display:grid;gap:7px;padding-left:0;list-style:none}.page-manuscripts .journey-order-list li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--app-border-soft);border-radius:10px}.page-manuscripts .journey-order-actions{display:flex;gap:4px}@media(max-width:700px){.page-manuscripts .journey-member{grid-template-columns:30px minmax(0,1fr)}.page-manuscripts .journey-member-actions{grid-column:1/-1;overflow-x:auto}.page-manuscripts .manuscript-card-actions{width:100%;margin-top:8px;overflow-x:auto}}
+</style>{% endblock %}
+{% block eyebrow %}<p class="app-eyebrow">MANUSCRIPTS</p>{% endblock %}
+{% block page_title %}稿件追踪{% endblock %}
+{% block page_description %}<p>集中查看当前状态，并展开稿件卡片浏览完整投稿历程。</p>{% endblock %}
+{% block page_actions %}<div class="d-flex gap-2 align-items-start"><button class="app-button app-button-secondary" id="createJourneyBtn" type="button" data-bs-toggle="modal" data-bs-target="#journeyModal"><i class="fas fa-link"></i> 合并投稿历程</button><div class="d-flex flex-column align-items-end"><button class="app-button" id="updateBtn" onclick="manualUpdate()"><i class="fas fa-sync-alt"></i> 手动更新</button><small class="text-muted mt-1" id="headerLastUpdate" style="font-size:.72rem;white-space:nowrap"></small></div></div>{% endblock %}
+{% block content %}
+        <!-- 更新状态条 -->
+        <div id="updateStatusBar">
+            <span id="updateStatusIcon"></span>
+            <span id="updateStatusText"></span>
+            <span class="last-update-text" id="lastUpdateText"></span>
+            <button type="button" class="btn-close btn-close-sm ms-auto" style="font-size:.7rem" onclick="dismissStatusBar()"></button>
+        </div>
+
+        <!-- 统计概览 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="stats-card">
+                    <h5><i class="fas fa-chart-pie"></i> 统计概览</h5>
+                    <div class="stats-grid mt-3">
+                        <div class="stats-item"><span class="stats-icon stats-icon-total"><i class="fas fa-file-alt"></i></span><div><div class="h4 mb-0" id="totalCount">{{ manuscripts|length }}</div><small>总论文数</small></div></div>
+                        <div class="stats-item"><span class="stats-icon stats-icon-accept"><i class="fas fa-check"></i></span><div><div class="h4 mb-0" id="acceptCount">-</div><small>已接收</small></div></div>
+                        <div class="stats-item"><span class="stats-icon stats-icon-review"><i class="fas fa-search"></i></span><div><div class="h4 mb-0" id="reviewCount">-</div><small>审稿中</small></div></div>
+                        <div class="stats-item"><span class="stats-icon stats-icon-revision"><i class="fas fa-pen"></i></span><div><div class="h4 mb-0" id="revisionCount">-</div><small>修改中</small></div></div>
+                        <div class="stats-item"><span class="stats-icon stats-icon-new"><i class="fas fa-bell"></i></span><div><div class="h4 mb-0 text-danger" id="newCount">{{ all_change_count }}</div><small>&#916; NEW</small>{% if all_change_count > 0 %}<br><a href="#" onclick="event.preventDefault(); ackAllMain()" style="font-size:.7em" title="确认全部待确认变化">确认全部</a>{% endif %}</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 筛选条件 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="filter-section">
+                    <div class="d-flex justify-content-between align-items-center gap-3 mb-3 flex-wrap">
+                        <h5 class="mb-0"><i class="fas fa-filter"></i> 筛选条件</h5>
+                        <div class="d-flex align-items-center gap-3 flex-wrap">
+                            <div class="filter-scope-control" aria-label="投稿历程筛选范围">
+                                <span class="filter-scope-label">历程匹配</span>
+                                <div class="filter-scope-switch" role="group">
+                                    <button type="button" class="filter-scope-option is-active" data-filter-scope="latest" aria-pressed="true">只看最新</button>
+                                    <button type="button" class="filter-scope-option" data-filter-scope="any" aria-pressed="false">任一投稿</button>
+                                </div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-secondary" id="advancedFilterToggle" type="button" aria-expanded="false" aria-controls="advancedFilters">
+                                更多筛选 <span class="badge bg-primary" id="advancedFilterCount" hidden>0</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="stage-filter-row" role="group" aria-label="稿件阶段快捷筛选">
+                        <button type="button" class="stage-filter is-active" data-stage="">全部阶段</button>
+                        <button type="button" class="stage-filter" data-stage="ongoing">进行中</button>
+                        <button type="button" class="stage-filter" data-stage="review">审稿中</button>
+                        <button type="button" class="stage-filter" data-stage="revision">修改中</button>
+                        <button type="button" class="stage-filter" data-stage="accept">已接收</button>
+                        <button type="button" class="stage-filter" data-stage="decision">已拒绝/重投</button>
+                    </div>
+                    <div class="filter-group mt-3">
+                        <div class="filter-item"><label for="journalFilter">期刊</label><select class="form-select" id="journalFilter"><option value="">所有期刊</option>{% for cfg in journal_configs %}<option value="{{ cfg.journal_name }}">{{ cfg.journal_name }}{% if cfg.short_name %} ({{ cfg.short_name }}){% endif %}</option>{% endfor %}</select></div>
+                        <div class="filter-item"><label for="providerFilter">投稿系统</label><select class="form-select" id="providerFilter"><option value="">所有投稿系统</option><option value="scholarone">ScholarOne</option><option value="editorial_manager">Editorial Manager</option></select></div>
+                        <div class="filter-item"><label for="statusFilter">当前状态</label><select class="form-select" id="statusFilter"><option value="">所有状态</option><optgroup label="Accept"><option value="accept">Accept</option></optgroup><optgroup label="Revision"><option value="revision">所有 Revision</option><option value="minor">Minor Revision</option><option value="major">Major Revision</option></optgroup><optgroup label="Reject and Resubmit"><option value="reject_and_resubmit">Reject and Resubmit</option></optgroup><optgroup label="Reject"><option value="reject">所有 Reject</option><option value="reject-only">Reject（排除 Resubmit）</option><option value="desk">Desk Reject</option></optgroup><optgroup label="Draft"><option value="draft">Draft</option></optgroup><optgroup label="Under Review"><option value="under_review">所有 Under Review</option><option value="awaiting">Awaiting</option><option value="review">Under Review</option><option value="other">其他审稿状态</option></optgroup></select></div>
+                        <div class="filter-item"><label for="titleFilter">搜索</label><input type="text" class="form-control" id="titleFilter" placeholder="搜索标题..."></div>
+                        <div class="filter-item filter-action"><label>&nbsp;</label><button class="btn btn-toggle" id="starToggleBtn" type="button" aria-pressed="false"><i class="far fa-star"></i> 仅看标星</button></div>
+                        <div class="filter-item filter-action"><label>&nbsp;</label><button class="btn btn-outline-secondary" id="resetFiltersBtn" type="button"><i class="fas fa-undo"></i> 重置</button></div>
+                    </div>
+                    <div id="advancedFilters" class="advanced-filters" hidden>
+                        <div class="filter-group">
+                            <div class="filter-item"><label for="changeFilter">变化状态</label><select class="form-select" id="changeFilter"><option value="">全部</option><option value="changed">NEW / 待确认</option><option value="unchanged">无待确认变化</option></select></div>
+                            <div class="filter-item"><label for="detailedStatusFilter">详细状态</label><select class="form-select" id="detailedStatusFilter"><option value="">所有详细状态</option></select></div>
+                            <div class="filter-item"><label for="editorFilter">负责编辑</label><select class="form-select" id="editorFilter"><option value="">所有编辑</option></select></div>
+                            <div class="filter-item"><label for="roundFilter">投稿轮次</label><select class="form-select" id="roundFilter"><option value="">所有轮次</option></select></div>
+                            <div class="filter-item"><label for="submittedYearFilter">首次提交年份</label><select class="form-select" id="submittedYearFilter"><option value="">所有年份</option></select></div>
+                            <div class="filter-item"><label for="activityYearFilter">最近状态年份</label><select class="form-select" id="activityYearFilter"><option value="">所有年份</option></select></div>
+                            <div class="filter-item"><label for="dateTypeFilter">日期类型</label><select class="form-select" id="dateTypeFilter"><option value="submitted">首次提交日期</option><option value="activity">最近活动日期</option><option value="decision">决策日期</option><option value="status">状态日期</option><option value="recorded">系统记录日期</option></select></div>
+                            <div class="filter-item"><label for="dateFromFilter">开始日期</label><input class="form-control" id="dateFromFilter" type="date"></div>
+                            <div class="filter-item"><label for="dateToFilter">结束日期</label><input class="form-control" id="dateToFilter" type="date"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 论文列表 -->
+                <div class="row">
+            <div class="col-12">
+                <div class="card">
+                                                        <div class="card-header">
+                                        <h5 class="card-title mb-0">
+                                            <i class="fas fa-list"></i> 论文列表
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                                <!-- 列表视图 -->
+                        <div id="manuscriptList">
+                            <div class="manuscript-empty-state" id="manuscriptEmptyState" hidden>
+                                <div class="manuscript-empty-mark"><i class="fas fa-search"></i></div>
+                                <h6>没有符合当前条件的稿件</h6>
+                                <p>可以调整筛选条件，或者清除筛选后查看全部稿件。</p>
+                                <button type="button" class="btn btn-outline-primary" id="emptyResetFiltersBtn"><i class="fas fa-undo"></i> 清除筛选</button>
+                            </div>
+                            {% for manuscript in manuscripts %}
+                            <div class="manuscript-card card mb-3"
+                                 data-journal="{{ manuscript.journal or '' }}"
+                                 data-status="{{ manuscript.status or '' }}"
+                                 data-detailed-status="{{ manuscript.detailed_status or '' }}"
+                                 data-title="{{ (manuscript.title or '') | replace('"', '&quot;') }}"
+                                 data-manuscript-id="{{ manuscript.manuscript_id or '' }}"
+                                 data-original-id="{{ manuscript.original_id }}"
+                                 data-card-kind="{{ manuscript.card_kind or 'manuscript' }}"
+                                 data-journey-id="{{ manuscript.journey_id or '' }}"
+                                 data-journey-members='{{ manuscript.journey_members | tojson | forceescape if manuscript.card_kind == "journey" else "[]" }}'
+                                 data-hidden="{{ 'true' if manuscript.is_hidden else 'false' }}"
+                                 data-search-text="{{ manuscript.search_text | default('', true) | e }}"
+                                 data-starred="{{ 'true' if manuscript.starred_count else 'false' }}"
+                                 data-status-changed="{{ 'true' if manuscript.unread_count else 'false' }}"
+                                 data-provider="{{ manuscript.provider or '' }}"
+                                 data-version-number="{{ manuscript.version_number or 1 }}"
+                                 data-round="{{ (manuscript.version_number - 1) if manuscript.version_number and manuscript.version_number > 0 else 0 }}"
+                                 data-editor="{{ manuscript.SE_or_DE or '' }}"
+                                 data-submitted-date="{{ manuscript.submitted_date or '' }}"
+                                 data-decision-date="{{ manuscript.decision_date or '' }}"
+                                 data-status-date="{{ manuscript.status_date or '' }}"
+                                 data-recorded-at="{{ manuscript.recorded_at or '' }}"
+                                 data-passed-first-round="{{ 'true' if (manuscript.status in ['Accept', 'Revision', 'Reject', 'Reject and Resubmit']) else 'false' }}"
+                                 onclick="{{ 'toggleJourney(' ~ manuscript.journey_id ~ ')' if manuscript.card_kind == 'journey' else 'toggleManuscriptTimeline(\'' ~ manuscript.original_id ~ '\')' }}"
+                                 style="cursor: pointer;">
+                                <div class="card-body">
+                                    <div class="row align-items-center">
+                                        <div class="col-auto pe-0">
+                                            <span class="star-btn {{ 'starred' if manuscript.starred_count else '' }}"
+                                                  {% if manuscript.card_kind != 'journey' %}onclick="event.stopPropagation(); toggleStar('{{ manuscript.original_id }}', this)"{% else %}onclick="event.stopPropagation()"{% endif %}
+                                                  title="{{ manuscript.starred_count ~ ' 个成员已标星' if manuscript.card_kind == 'journey' else '标星/取消标星' }}">
+                                                <i class="fa{{ 's' if manuscript.starred_count else 'r' }} fa-star"></i>{% if manuscript.card_kind == 'journey' and manuscript.starred_count %}<small>{{ manuscript.starred_count }}</small>{% endif %}
+                                            </span>
+                                            {% if manuscript.unread_count %}
+                                            <span class="badge bg-danger ms-1 new-badge" style="font-size:.6em;vertical-align:super;cursor:pointer"
+                                                  onclick="event.stopPropagation(); {{ 'ackJourney(' ~ manuscript.journey_id ~ ', this)' if manuscript.card_kind == 'journey' else 'ackChange(\'' ~ manuscript.original_id ~ '\', this)' }}"
+                                                  title="状态有变化，点击确认">{{ manuscript.unread_count ~ ' NEW' if manuscript.card_kind == 'journey' else 'NEW' }}</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-lg-5">
+                                            <h6 class="card-title mb-1">
+                                                <span class="version-badge">V{{ manuscript.version_number - 1 if manuscript.version_number else 0 }}</span>
+                                                {% if manuscript.card_kind == 'journey' %}<span class="badge bg-primary me-1"><i class="fas fa-link"></i> {{ manuscript.member_count }} 个投稿</span>{% endif %}
+                                                {{ manuscript.title or manuscript.manuscript_id }}
+                                            </h6>
+                                            <small class="text-muted">最新ID: {{ manuscript.manuscript_id }}</small>
+                                        </div>
+                                        <div class="col-lg-2">
+                                            <span class="journal-badge bg-info text-white">{{ manuscript.journal }}</span>
+                                        </div>
+                                        <div class="col-lg-3">
+                                            {% set status = manuscript.status or 'Under Review' %}
+                                            {% set detailed_status = manuscript.detailed_status or manuscript.status or 'Under Review' %}
+                                            <div class="mb-1">
+                                                {% if status == 'Accept' %}
+                                                <span class="badge bg-success">Accept</span>
+                                                {% elif status == 'Revision' %}
+                                                <span class="badge bg-warning">Revision</span>
+                                                {% elif status == 'Reject and Resubmit' %}
+                                                <span class="badge bg-warning">Reject and Resubmit</span>
+                                                {% elif status == 'Reject' %}
+                                                <span class="badge bg-danger">Reject</span>
+                                                {% elif status == 'Draft' %}
+                                                <span class="badge bg-secondary">Draft</span>
+                                                {% else %}
+                                                <span class="badge bg-info">Under Review</span>
+                                                {% endif %}
+                                            </div>
+                                            <small class="decision-text text-muted">{{ detailed_status }}</small>
+                                        </div>
+                                        <div class="col-lg-1">
+                                            <small class="text-muted">
+                                                <i class="fas fa-chevron-down"></i>
+                                            </small>
+                                        </div>
+                                    </div>
+                                    <div class="row mt-2 align-items-center">
+                                        <div class="col">
+                                            <small class="text-muted">
+                                                <i class="fas fa-calendar-alt"></i> 首次提交: {{ manuscript.submitted_date or '未知' }}
+                                                {% if manuscript.decision_date %}
+                                                | <i class="fas fa-gavel"></i> 最新决策: {{ manuscript.decision_date }}
+                                                        {% endif %}
+                                                {% if manuscript.recorded_at %}
+                                                | <i class="fas fa-clock"></i> 状态更新: {{ manuscript.recorded_at[:19] }}
+                                                    {% endif %}
+                                            </small>
+                                        </div>
+                                        <div class="col-auto manuscript-card-actions">
+                                            {% if manuscript.card_kind == 'journey' %}
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); openJourneyEditor({{ manuscript.journey_id }})">编辑历程</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setJourneyHidden({{ manuscript.journey_id }}, {{ 'false' if manuscript.is_hidden else 'true' }})">{{ '恢复显示' if manuscript.is_hidden else '隐藏整个历程' }}</button>
+                                            {% else %}
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setManuscriptHidden('{{ manuscript.original_id }}', {{ 'false' if manuscript.is_hidden else 'true' }})">{{ '恢复显示' if manuscript.is_hidden else '隐藏' }}</button>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+
+                                    {% if manuscript.card_kind == 'journey' %}
+                                    <div class="collapse mt-3 journey-members" id="journey-{{ manuscript.journey_id }}">
+                                        <div class="card bg-light"><div class="card-header d-flex justify-content-between align-items-center"><strong><i class="fas fa-link"></i> 投稿历程</strong><small>最后一项决定卡片当前状态</small></div><div class="list-group list-group-flush">
+                                        {% for member in manuscript.journey_members %}
+                                          <div class="list-group-item journey-member{% if member.is_hidden %} is-hidden{% endif %}" role="button" tabindex="0" aria-label="查看 {{ member.title or member.manuscript_id }} 的状态时间轴" onclick="event.stopPropagation(); toggleManuscriptTimeline('{{ member.original_id }}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleManuscriptTimeline('{{ member.original_id }}')}">
+                                            <div class="journey-member-order">{{ loop.index }}</div>
+                                            <div class="journey-member-main"><strong>{{ member.title or member.manuscript_id }}</strong><small>{{ member.journal }} · {{ member.manuscript_id }} · {{ member.status }}{% if member.is_hidden %} · 已隐藏{% endif %}</small></div>
+                                            <div class="journey-member-actions">
+                                              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setManuscriptHidden('{{ member.original_id }}', {{ 'false' if member.is_hidden else 'true' }})">{{ '恢复' if member.is_hidden else '隐藏此投稿' }}</button>
+                                              <button type="button" class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); unlinkJourneyMember({{ manuscript.journey_id }}, '{{ member.original_id }}')">解除</button>
+                                            </div>
+                                            <div class="collapse mt-2 journey-member-timeline" id="timeline-{{ member.original_id }}" onclick="event.stopPropagation()"><div class="card bg-light"><div class="card-header d-flex justify-content-between align-items-center"><strong><i class="fas fa-history"></i> 论文状态时间轴</strong><button type="button" class="btn-close" onclick="event.stopPropagation(); toggleManuscriptTimeline('{{ member.original_id }}')" aria-label="关闭时间轴"></button></div><div class="card-body" id="timeline-content-{{ member.original_id }}"><div class="text-center p-3"><i class="fas fa-spinner fa-spin"></i> 正在加载时间轴...</div></div></div></div>
+                                          </div>
+                                        {% endfor %}
+                                        </div></div>
+                                    </div>
+                                    {% endif %}
+
+                                    <div class="collapse mt-3" id="timeline-{{ manuscript.original_id }}">
+                                        <div class="card bg-light">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">
+                                                    <i class="fas fa-history"></i> 论文状态时间轴
+                                                    <button type="button" class="btn-close float-end" onclick="toggleManuscriptTimeline('{{ manuscript.original_id }}')" aria-label="Close"></button>
+                                                </h6>
+                                                </div>
+                                            <div class="card-body" id="timeline-content-{{ manuscript.original_id }}">
+                                                <div class="text-center p-3">
+                                                    <i class="fas fa-spinner fa-spin"></i> 正在加载时间轴...
+                                                </div>
+                                            </div>
+                                        </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                    </div>
+
+                        <!-- 时间轴视图 -->
+                        <div id="timelineContainer" style="display: none;">
+                            <div class="timeline" id="timeline">
+                                <!-- 时间轴内容将通过JavaScript动态生成 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 调度器信息模态框 -->
+        <div class="modal fade" id="schedulerModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">定时任务状态</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                <div class="row">
+                            <div class="col-12">
+                                <p><strong>运行状态:</strong>
+                                    <span class="badge bg-{{ 'success' if scheduler_status.is_running else 'danger' }}">
+                                        {{ '运行中' if scheduler_status.is_running else '已停止' }}
+                                    </span>
+                                </p>
+                                <p><strong>下次运行时间:</strong> {{ scheduler_status.next_run_time }}</p>
+                                <p><strong>当前时间:</strong> {{ current_time }}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        {% if scheduler_status.is_running %}
+                        <button type="button" class="btn btn-danger" onclick="stopScheduler()">停止调度器</button>
+                        {% else %}
+                        <button type="button" class="btn btn-success" onclick="startScheduler()">启动调度器</button>
+                        {% endif %}
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="journeyModal" tabindex="-1" aria-labelledby="journeyModalTitle" aria-hidden="true">
+          <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="journeyModalTitle">合并投稿历程</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+            <div class="modal-body">
+              <p class="text-muted">选择至少两次投稿并调整顺序。最后一项决定合并卡片的标题、期刊和当前状态。</p>
+              <div class="alert alert-danger" id="journeyError" hidden></div>
+              <div class="journey-search">
+                <i class="fas fa-search" aria-hidden="true"></i>
+                <label class="visually-hidden" for="journeySearchInput">搜索可合并稿件</label>
+                <input type="search" class="form-control" id="journeySearchInput" placeholder="搜索标题、期刊、稿件编号或状态" autocomplete="off">
+              </div>
+              <div class="journey-picker" id="journeyPicker">
+                {% for item in available_manuscripts %}
+                <label class="journey-picker-item" data-search-text="{{ ((item.title or '') ~ ' ' ~ (item.journal or '') ~ ' ' ~ (item.manuscript_id or '') ~ ' ' ~ (item.original_id or '') ~ ' ' ~ (item.status or '') ~ ' ' ~ (item.detailed_status or ''))|lower }}"><input type="checkbox" value="{{ item.original_id }}"><span><strong>{{ item.title or item.manuscript_id }}</strong><small>{{ item.journal }} · {{ item.manuscript_id }} · {{ item.status }}</small></span></label>
+                {% endfor %}
+                <div class="journey-search-empty" id="journeySearchEmpty" hidden>没有匹配的稿件</div>
+              </div>
+              <hr><h6>投稿顺序</h6><ol class="journey-order-list" id="journeyOrderList"></ol>
+              <input type="hidden" id="journeyEditId"><input type="hidden" id="journeyEditRevision">
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-danger me-auto" id="dissolveJourneyBtn" hidden>解散历程</button><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="button" class="btn btn-primary" id="saveJourneyBtn">保存历程</button></div>
+          </div></div>
+        </div>
+
+        <!-- 时间轴详情模态框 -->
+        <div class="modal fade" id="timelineModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">论文状态时间轴</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="manuscriptTimeline"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+{% endblock %}
+{% block scripts %}
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/ui/manuscripts.js"></script>
+    <script>
+        // 视图切换
+        const listViewEl = document.getElementById('listView');
+        const timelineViewEl = document.getElementById('timelineView');
+
+        if (listViewEl) {
+            listViewEl.addEventListener('change', function() {
+                if (this.checked) {
+                    document.getElementById('manuscriptList').style.display = 'block';
+                    document.getElementById('timelineContainer').style.display = 'none';
+                }
+            });
+        }
+
+        if (timelineViewEl) {
+            timelineViewEl.addEventListener('change', function() {
+                if (this.checked) {
+                    document.getElementById('manuscriptList').style.display = 'none';
+                    document.getElementById('timelineContainer').style.display = 'block';
+                    generateTimeline();
+                }
+            });
+        }
+
+        let isStarFilterActive = false;
+        let activeStageFilter = '';
+        let activeFilterScope = 'latest';
+
+        function syncStarFilterButton() {
+            const btn = document.getElementById('starToggleBtn');
+            btn.classList.toggle('active', isStarFilterActive);
+            btn.setAttribute('aria-pressed', String(isStarFilterActive));
+            btn.innerHTML = isStarFilterActive ? '<i class="fas fa-star"></i> 仅看标星' : '<i class="far fa-star"></i> 仅看标星';
+        }
+
+        function syncStarredUrl() {
+            const url = new URL(window.location.href);
+            if (isStarFilterActive) url.searchParams.set('view', 'starred');
+            else url.searchParams.delete('view');
+            history.replaceState({ starredView: isStarFilterActive }, '', url);
+        }
+
+        function toggleStarFilter() {
+            isStarFilterActive = !isStarFilterActive;
+            syncStarFilterButton();
+            syncStarredUrl();
+            applyFilters();
+        }
+
+        async function ackChange(originalId, badge) {
+            try {
+                const resp = await fetch(`/api/manuscripts/${originalId}/acknowledge`, { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) {
+                    const card = badge.closest('.manuscript-card');
+                    badge.remove();
+                    if (card) card.dataset.statusChanged = 'false';
+                    applyFilters();
+                }
+            } catch (e) { console.error('ack failed', e); }
+        }
+
+        async function ackAllMain() {
+            try {
+                const resp = await fetch('/api/manuscripts/acknowledge-all?scope=all', { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) location.reload();
+            } catch (e) { console.error('ack all failed', e); }
+        }
+
+        async function toggleStar(originalId, element) {
+            try {
+                const response = await fetch(`/api/manuscripts/${originalId}/star`, { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    const card = element.closest('.manuscript-card');
+                    const icon = element.querySelector('i');
+                    element.classList.toggle('starred', result.starred);
+                    icon.classList.toggle('fas', result.starred);
+                    icon.classList.toggle('far', !result.starred);
+                    card.dataset.starred = result.starred ? 'true' : 'false';
+                    applyFilters();
+                }
+            } catch (error) { console.error('标星操作失败:', error); }
+        }
+
+        function applyFilters() {
+            if (window.ManuscriptFilters) {
+                window.ManuscriptFilters.applyFilters({ starredOnly: isStarFilterActive, stage: activeStageFilter, filterScope: activeFilterScope });
+            }
+        }
+
+        // ===== 更新状态条工具函数 =====
+
+        let _pollTimer = null;
+        const _btnOriginalHTML = '<i class="fas fa-sync-alt"></i> 手动更新';
+
+        function fmtLastUpdate(utcStr) {
+            if (!utcStr) return '';
+            // 服务端存的是 UTC，转本地时间
+            const dt = new Date(utcStr.replace(' ', 'T') + 'Z');
+            const diff = Math.floor((Date.now() - dt.getTime()) / 1000);
+            if (diff < 60) return '刚刚更新';
+            if (diff < 3600) return `${Math.floor(diff/60)} 分钟前更新`;
+            if (diff < 86400) return `${Math.floor(diff/3600)} 小时前更新`;
+            return `${Math.floor(diff/86400)} 天前更新`;
+        }
+
+        function showStatusBar(type, text, lastUpdate) {
+            const bar = document.getElementById('updateStatusBar');
+            const icon = document.getElementById('updateStatusIcon');
+            const textEl = document.getElementById('updateStatusText');
+            bar.className = type;
+            if (type === 'running') {
+                icon.innerHTML = '<span class="spinner-border" role="status"></span>';
+            } else if (type === 'success') {
+                icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+            } else {
+                icon.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+            }
+            textEl.textContent = text;
+            if (lastUpdate) {
+                const lu = fmtLastUpdate(lastUpdate);
+                document.getElementById('lastUpdateText').textContent = lu ? `· ${lu}` : '';
+                document.getElementById('headerLastUpdate').textContent = lu;
+            }
+        }
+
+        function dismissStatusBar() {
+            document.getElementById('updateStatusBar').className = '';
+            document.getElementById('updateStatusBar').style.display = 'none';
+        }
+
+        function setUpdateBtn(running, elapsed) {
+            const btn = document.getElementById('updateBtn');
+            if (!btn) return;
+            if (running) {
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> 更新中... ${elapsed || ''}`;
+                btn.disabled = true;
+            } else {
+                btn.innerHTML = _btnOriginalHTML;
+                btn.disabled = false;
+            }
+        }
+
+        // 轮询进度（可从外部调用，startedAt 用于计算耗时）
+        function startPolling(startedAt) {
+            if (_pollTimer) clearTimeout(_pollTimer);
+            const t0 = startedAt ? new Date(startedAt).getTime() : Date.now();
+
+            const elapsed = () => {
+                const sec = Math.round((Date.now() - t0) / 1000);
+                return sec < 60 ? `${sec}s` : `${Math.floor(sec/60)}m${sec%60}s`;
+            };
+
+            const poll = async () => {
+                try {
+                    const resp = await fetch('/api/update/status');
+                    const s = await resp.json();
+
+                    // 更新上次更新时间（即使还在跑也可能有旧数据）
+                    if (s.last_db_update) {
+                        document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
+                    }
+
+                    if (s.running) {
+                        showStatusBar('running', `正在抓取数据... ${elapsed()}`, null);
+                        setUpdateBtn(true, elapsed());
+                        _pollTimer = setTimeout(poll, 3000);
+                        return;
+                    }
+
+                    // 完成
+                    setUpdateBtn(false);
+                    if (s.success) {
+                        showStatusBar('success',
+                            `更新完成，找到 ${s.total_manuscripts} 篇论文`,
+                            s.last_db_update);
+                        // 3 秒后刷新页面以展示最新数据
+                        setTimeout(() => location.reload(), 3000);
+                    } else if (s.finished_at) {
+                        // 已有结果（失败）
+                        showStatusBar('failure',
+                            '更新失败: ' + (s.result_error || s.error || '未知错误'),
+                            s.last_db_update);
+                    }
+                    // 如果 finished_at 为空说明还没跑过，不显示
+                } catch (e) {
+                    setUpdateBtn(false);
+                    showStatusBar('failure', '查询状态失败: ' + e.message, null);
+                }
+            };
+            poll();
+        }
+
+        // 页面加载时：检查是否有正在进行的更新
+        (async () => {
+            try {
+                const resp = await fetch('/api/update/status');
+                const s = await resp.json();
+                if (s.last_db_update) {
+                    document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
+                }
+                if (s.running) {
+                    showStatusBar('running', '正在抓取数据...', null);
+                    setUpdateBtn(true);
+                    startPolling(s.started_at);
+                }
+            } catch (_) {}
+        })();
+
+        // 手动更新入口
+        async function manualUpdate() {
+            try {
+                const startResp = await fetch('/api/update', { method: 'POST' });
+                const startResult = await startResp.json();
+
+                if (startResult.status === 'already_running') {
+                    showStatusBar('running', '更新已在进行中，请稍候...', null);
+                    startPolling(null);
+                    return;
+                }
+
+                showStatusBar('running', '正在启动...', null);
+                setUpdateBtn(true);
+                startPolling(new Date().toISOString());
+
+            } catch (error) {
+                showStatusBar('failure', '启动更新失败: ' + error.message, null);
+            }
+        }
+
+        // 显示调度器信息
+        function showSchedulerInfo() {
+            const modal = new bootstrap.Modal(document.getElementById('schedulerModal'));
+            modal.show();
+        }
+
+        // 启动/停止调度器
+        async function startScheduler() {
+            const response = await fetch('/api/scheduler/start', { method: 'POST' });
+            const result = await response.json();
+            alert(result.message);
+            location.reload();
+        }
+
+        async function stopScheduler() {
+            const response = await fetch('/api/scheduler/stop', { method: 'POST' });
+            const result = await response.json();
+            alert(result.message);
+            location.reload();
+        }
+
+        // 显示论文时间轴
+        async function showTimeline(manuscriptId) {
+            try {
+                const response = await fetch(`/api/manuscripts/${manuscriptId}/history`);
+                const result = await response.json();
+
+                if (result.success) {
+                    const timelineHtml = generateManuscriptTimeline(result.history, manuscriptId);
+                    document.getElementById('manuscriptTimeline').innerHTML = timelineHtml;
+
+                    const modal = new bootstrap.Modal(document.getElementById('timelineModal'));
+                    modal.show();
+                }
+            } catch (error) {
+                alert('获取时间轴失败: ' + error.message);
+            }
+        }
+
+        // 显示版本信息
+        async function showVersions(originalId) {
+            try {
+                const response = await fetch(`/api/manuscripts/versions/${originalId}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    const versions = result.versions.map(v => `${v.manuscript_id} (V${v.version_number - 1})`).join('\n');
+                    alert(`论文版本:\n${versions}`);
+                }
+            } catch (error) {
+                alert('获取版本信息失败: ' + error.message);
+            }
+        }
+
+        function toggleJourney(journeyId) {
+            document.getElementById(`journey-${journeyId}`)?.classList.toggle('show');
+        }
+
+        async function setManuscriptHidden(originalId, hidden) {
+            if (hidden && !confirm('隐藏这次投稿？以后仍会继续抓取，可在“隐藏稿件”中恢复。')) return;
+            const response = await fetch(`/api/manuscripts/${encodeURIComponent(originalId)}/hidden`, {method: hidden ? 'PUT' : 'DELETE'});
+            if (!response.ok) return alert((await response.json()).detail || '操作失败');
+            location.reload();
+        }
+
+        async function setJourneyHidden(journeyId, hidden) {
+            if (hidden && !confirm('隐藏整个投稿历程？以后仍会继续抓取，可在“隐藏稿件”中恢复。')) return;
+            const response = await fetch(`/api/journeys/${journeyId}/hidden`, {method: hidden ? 'PUT' : 'DELETE'});
+            if (!response.ok) return alert((await response.json()).detail || '操作失败');
+            location.reload();
+        }
+
+        async function ackJourney(journeyId) {
+            const response = await fetch(`/api/journeys/${journeyId}/acknowledge`, {method:'POST'});
+            if (response.ok) location.reload();
+        }
+
+        async function unlinkJourneyMember(journeyId, originalId) {
+            if (!confirm('从投稿历程中解除这次投稿？')) return;
+            const response = await fetch(`/api/journeys/${journeyId}/members/${encodeURIComponent(originalId)}`, {method:'DELETE'});
+            if (!response.ok) return alert((await response.json()).detail || '解除失败');
+            location.reload();
+        }
+
+        const journeyModalElement = document.getElementById('journeyModal');
+        const journeyPicker = document.getElementById('journeyPicker');
+        const journeySearchInput = document.getElementById('journeySearchInput');
+        const journeySearchEmpty = document.getElementById('journeySearchEmpty');
+        const journeyOrderList = document.getElementById('journeyOrderList');
+        const journeyError = document.getElementById('journeyError');
+        let journeyItems = [];
+
+        function filterJourneyPicker() {
+            const query = (journeySearchInput?.value || '').trim().toLocaleLowerCase('zh-CN');
+            let visibleCount = 0;
+            journeyPicker?.querySelectorAll('.journey-picker-item').forEach(item => {
+                const matches = !query || (item.dataset.searchText || '').toLocaleLowerCase('zh-CN').includes(query);
+                item.hidden = !matches;
+                if (matches) visibleCount += 1;
+            });
+            if (journeySearchEmpty) journeySearchEmpty.hidden = visibleCount !== 0;
+        }
+
+        journeySearchInput?.addEventListener('input', filterJourneyPicker);
+
+        function renderJourneyOrder() {
+            journeyOrderList.innerHTML = '';
+            journeyItems.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span>${index + 1}</span><span><strong></strong><small class="d-block text-muted"></small></span><span class="journey-order-actions"><button type="button" class="btn btn-sm btn-outline-secondary" data-move="up" ${index===0?'disabled':''}>↑</button><button type="button" class="btn btn-sm btn-outline-secondary" data-move="down" ${index===journeyItems.length-1?'disabled':''}>↓</button><button type="button" class="btn btn-sm btn-outline-danger" data-remove>×</button></span>`;
+                li.querySelector('strong').textContent = item.title || item.manuscript_id || item.original_id;
+                li.querySelector('small').textContent = `${item.journal || ''} · ${item.manuscript_id || item.original_id}`;
+                li.querySelector('[data-move="up"]').onclick = () => { [journeyItems[index-1],journeyItems[index]]=[journeyItems[index],journeyItems[index-1]];renderJourneyOrder(); };
+                li.querySelector('[data-move="down"]').onclick = () => { [journeyItems[index+1],journeyItems[index]]=[journeyItems[index],journeyItems[index+1]];renderJourneyOrder(); };
+                li.querySelector('[data-remove]').onclick = () => { journeyItems.splice(index,1);renderJourneyOrder(); };
+                journeyOrderList.appendChild(li);
+            });
+        }
+
+        journeyPicker?.querySelectorAll('input').forEach(input => input.addEventListener('change', () => {
+            const label = input.closest('label');
+            const item = {original_id:input.value,title:label.querySelector('strong').textContent,manuscript_id:label.querySelector('small').textContent,journal:''};
+            if (input.checked) journeyItems.push(item); else journeyItems = journeyItems.filter(x=>x.original_id!==input.value);
+            renderJourneyOrder();
+        }));
+
+        journeyModalElement?.addEventListener('show.bs.modal', event => {
+            if (journeySearchInput) journeySearchInput.value = '';
+            filterJourneyPicker();
+            if (event.relatedTarget?.id === 'createJourneyBtn') {
+                journeyItems=[];document.getElementById('journeyEditId').value='';document.getElementById('journeyEditRevision').value='';document.getElementById('dissolveJourneyBtn').hidden=true;
+                journeyPicker.querySelectorAll('input').forEach(input=>input.checked=false);renderJourneyOrder();
+            }
+        });
+
+        journeyModalElement?.addEventListener('shown.bs.modal', () => journeySearchInput?.focus());
+
+        async function openJourneyEditor(journeyId) {
+            const response = await fetch(`/api/journeys/${journeyId}`), result = await response.json();
+            if (!response.ok) return alert(result.detail || '加载失败');
+            journeyItems = result.journey.members.map(member=>({...member}));
+            document.getElementById('journeyEditId').value=journeyId;
+            document.getElementById('journeyEditRevision').value=result.journey.revision;
+            document.getElementById('dissolveJourneyBtn').hidden=false;
+            renderJourneyOrder();bootstrap.Modal.getOrCreateInstance(journeyModalElement).show();
+        }
+
+        document.getElementById('saveJourneyBtn')?.addEventListener('click', async () => {
+            journeyError.hidden=true;
+            if (journeyItems.length < 2) { journeyError.textContent='请至少选择两次投稿。';journeyError.hidden=false;return; }
+            const journeyId=document.getElementById('journeyEditId').value;
+            const url=journeyId?`/api/journeys/${journeyId}/order`:'/api/journeys';
+            const body=journeyId?{ordered_original_ids:journeyItems.map(x=>x.original_id),expected_revision:Number(document.getElementById('journeyEditRevision').value)}:{member_original_ids:journeyItems.map(x=>x.original_id)};
+            const response=await fetch(url,{method:journeyId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),result=await response.json();
+            if (!response.ok) {journeyError.textContent=result.detail||'保存失败';journeyError.hidden=false;return;} location.reload();
+        });
+
+        document.getElementById('dissolveJourneyBtn')?.addEventListener('click', async () => {
+            const journeyId=document.getElementById('journeyEditId').value;if(!journeyId||!confirm('解散投稿历程并恢复为独立稿件？'))return;
+            const response=await fetch(`/api/journeys/${journeyId}`,{method:'DELETE'});if(response.ok)location.reload();
+        });
+
+        // 切换论文时间轴展开/折叠
+        async function toggleManuscriptTimeline(originalId) {
+            const timelineDiv = document.getElementById(`timeline-${originalId}`);
+            const timelineContent = document.getElementById(`timeline-content-${originalId}`);
+
+            if (timelineDiv.classList.contains('show')) {
+                // 如果已经展开，则折叠
+                timelineDiv.classList.remove('show');
+            } else {
+                // 如果已折叠，则展开并加载数据
+                timelineDiv.classList.add('show');
+
+                // 如果还没有加载过数据，则加载
+                if (timelineContent.innerHTML.includes('正在加载时间轴')) {
+                    try {
+                        const response = await fetch(`/api/manuscripts/${originalId}/history`);
+                        const result = await response.json();
+
+                        if (result.success && result.history.length > 0) {
+                            const timelineHtml = generateManuscriptTimeline(result.history, originalId);
+                            timelineContent.innerHTML = timelineHtml;
+                        } else {
+                            timelineContent.innerHTML = '<div class="text-center text-muted p-3">暂无历史记录</div>';
+                        }
+                    } catch (error) {
+                        console.error('获取论文历史记录失败:', error);
+                        timelineContent.innerHTML = '<div class="text-center text-danger p-3">加载失败，请重试</div>';
+                    }
+                }
+            }
+        }
+
+        function generateManuscriptTimeline(history, originalId) {
+            if (!history || history.length === 0)
+                return '<div class="text-center text-muted p-3">暂无历史记录</div>';
+
+            const events = [];
+            const seenSub = new Set();
+            let previousStatusState = null;
+
+            history.forEach((r, idx) => {
+                const v = r.version_number || 1;
+                const isFirstOfVersion = idx === 0 || (history[idx-1].version_number || 1) !== v;
+
+                // 每个版本只生成一个"提交"节点
+                if (isFirstOfVersion && r.submitted_date) {
+                    const k = `sub_${v}`;
+                    if (!seenSub.has(k)) {
+                        seenSub.add(k);
+                        events.push({date:new Date(r.submitted_date), type:'submitted', v, status:'已提交', record:r});
+                    }
+                }
+
+                // 有决策日期时，该状态是期刊在决策日产生的结果，不应使用后续爬取时间。
+                // 没有决策日期时，优先使用来源提供的状态日期；最后才回退到首次观测时间。
+                const status = r.detailed_status || r.status || '';
+                const statusState = `${r.manuscript_id || ''}_${v}_${r.status || ''}_${status}`;
+                if (r.decision_date) {
+                    events.push({date:new Date(r.decision_date), type:'decision', v, status, record:r});
+                    previousStatusState = statusState;
+                } else if (statusState !== previousStatusState) {
+                    const observedDate = r.status_date || r.recorded_at;
+                    if (observedDate) {
+                        events.push({date:new Date(observedDate), type:'status', v, status, record:r});
+                    }
+                    previousStatusState = statusState;
+                }
+            });
+
+            events.sort((a,b) => a.date - b.date);
+
+            // 去掉同一天同一状态的重复节点（提交节点和首个状态节点可能同天）
+            const deduped = [];
+            const dedupSet = new Set();
+            events.forEach(e => {
+                const key = `${e.date.toDateString()}_${e.status}_${e.v}`;
+                if (!dedupSet.has(key)) {
+                    dedupSet.add(key);
+                    deduped.push(e);
+                }
+            });
+
+            if (!deduped.length) return '<div class="text-center text-muted p-3">暂无时间数据</div>';
+
+            const fmt = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+            const gapDays = ms => Math.round(ms/864e5);
+
+            function stClass(e) {
+                const s = e.record.status;
+                if (s==='Accept') return ' st-accept';
+                if (s==='Revision') return ' st-revision';
+                if (s==='Reject') return ' st-reject';
+                if (s==='Reject and Resubmit') return ' st-reject-resubmit';
+                return '';
+            }
+            function actLabel(e) {
+                if (e.type==='submitted') return '提交';
+                if (e.type==='decision') return '决策';
+                return '状态';
+            }
+
+            const first = deduped[0].date, last = deduped[deduped.length-1].date;
+            const totalDays = Math.ceil((last-first)/864e5);
+            const span = last - first || 1;
+
+            let h = `<div class="ptl"><div class="ptl-head"><h6>📅 投稿历程 — ${originalId}</h6><small>${fmt(first)} → ${fmt(last)}（历时 ${totalDays} 天）</small></div>`;
+            h += `<div class="ptl-track"><div class="ptl-line"></div><div class="ptl-nodes">`;
+
+            deduped.forEach((e, i) => {
+                const vDisp = e.v - 1;
+                const dir = i % 2 === 0 ? 'up' : 'dn';
+                const evCls = 'ev-' + (e.type==='submitted'?'submitted':e.type==='decision'?'decision':'status') + stClass(e);
+                const gd = i > 0 ? gapDays(e.date - deduped[i-1].date) : 0;
+                const pct = (e.date - first) / span * 100;
+
+                let cardShift = '';
+                if (pct > 85) cardShift = 'style="transform:translateX(-30px)"';
+                else if (pct < 15) cardShift = 'style="transform:translateX(30px)"';
+
+                h += `<div class="ptl-n ${dir} ${evCls}" style="left:${pct.toFixed(2)}%">`;
+                h += `<div class="card" ${cardShift}>`;
+                h += `<span class="ver">V${vDisp}</span>`;
+                h += `<span class="act">${actLabel(e)}</span>`;
+                h += `<span class="st">${e.status}</span>`;
+                h += `<span class="dt">${fmt(e.date)}</span>`;
+                if (gd > 0) h += `<span class="gap">← ${gd}天</span>`;
+                h += `</div>`;
+                h += `<div class="stem"></div>`;
+                h += `<div class="dot"></div>`;
+                h += `</div>`;
+            });
+
+            h += `</div></div></div>`;
+            return h;
+        }
+
+
+
+        // 版本折叠展开功能
+        function toggleVersions(originalId) {
+            const collapse = document.getElementById(`versions-${originalId}`);
+            const chevron = document.getElementById(`chevron-${originalId}`);
+
+            if (collapse.classList.contains('show')) {
+                collapse.classList.remove('show');
+                chevron.classList.remove('fa-chevron-down');
+                chevron.classList.add('fa-chevron-right');
+            } else {
+                collapse.classList.add('show');
+                chevron.classList.remove('fa-chevron-right');
+                chevron.classList.add('fa-chevron-down');
+            }
+        }
+
+        // 生成时间轴HTML
+        async function generateTimeline() {
+            const timeline = document.getElementById('timeline');
+            timeline.innerHTML = '<div class="text-center p-4"><i class="fas fa-spinner fa-spin"></i> 正在生成时间轴...</div>';
+
+            try {
+                const response = await fetch('/api/manuscripts');
+                const result = await response.json();
+
+                if (result.success && result.manuscripts.length > 0) {
+                    let timelineHtml = '<div class="timeline">';
+
+                    // 按时间排序所有论文的最新更新
+                    const sortedManuscripts = result.manuscripts
+                        .filter(m => m.last_updated)
+                        .sort((a, b) => new Date(b.last_updated) - new Date(a.last_updated));
+
+                    sortedManuscripts.forEach((manuscript, index) => {
+                        const isLeft = index % 2 === 0;
+                        const decision = manuscript.latest_decision || '待定';
+
+                        timelineHtml += `
+                            <div class="timeline-item ${isLeft ? 'left' : 'right'}">
+                                <div class="timeline-content">
+                                    <h6>${manuscript.title || manuscript.manuscript_id}</h6>
+                                    <p class="mb-1"><strong>${decision}</strong></p>
+                                    <p class="mb-1">期刊: ${manuscript.journal}</p>
+                                    <small class="text-muted">
+                                        更新时间: ${manuscript.last_updated ? manuscript.last_updated.substring(0, 19) : '未知'}
+                                    </small>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    timelineHtml += '</div>';
+                    timeline.innerHTML = timelineHtml;
+                } else {
+                    timeline.innerHTML = '<div class="text-center p-4 text-muted">暂无数据生成时间轴</div>';
+                }
+            } catch (error) {
+                console.error('生成时间轴失败:', error);
+                timeline.innerHTML = '<div class="text-center p-4 text-danger">生成时间轴失败</div>';
+            }
+        }
+
+
+
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            isStarFilterActive = new URL(window.location.href).searchParams.get('view') === 'starred';
+            syncStarFilterButton();
+            if (window.ManuscriptFilters) {
+                window.ManuscriptFilters.initialize({
+                    getStarredOnly: () => isStarFilterActive,
+                    setStarredOnly: active => { isStarFilterActive = active; syncStarFilterButton(); },
+                    getStage: () => activeStageFilter,
+                    setStage: stage => { activeStageFilter = stage; },
+                    getFilterScope: () => activeFilterScope,
+                    setFilterScope: scope => { activeFilterScope = scope; }
+                });
+            }
+            applyFilters();
+        });
+    </script>
+{% endblock %}

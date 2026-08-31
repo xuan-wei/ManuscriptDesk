@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}登录 · Manuscript Desk{% endblock %}</title>
+  <link rel="stylesheet" href="/static/ui/shell.css">
+  <link rel="stylesheet" href="/static/ui/account.css">
+  {% block head %}{% endblock %}
+</head>
+<body class="auth-body">
+  <a class="app-skip-link" href="#auth-main">跳到主要内容</a>
+  <main class="auth-layout" id="auth-main">
+    <section class="auth-intro" aria-label="产品介绍">
+      <a class="auth-brand" href="/login"><span class="app-brand-mark">M</span><span>Manuscript<small>DESK</small></span></a>
+      <div><p class="app-eyebrow">ACADEMIC WORKFLOW</p><h1>清晰掌握每一篇稿件的投稿进程。</h1><p>集中查看状态、历史、标星与自动化任务，让漫长的投稿周期保持井然有序。</p></div>
+      <p class="auth-footnote">Private manuscript tracking workspace</p>
+    </section>
+    <section class="auth-panel">{% block content %}{% endblock %}</section>
+  </main>
+  <script src="/static/ui/account.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

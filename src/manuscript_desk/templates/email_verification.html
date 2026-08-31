@@ -1,0 +1,4 @@
+{% extends "auth_base.html" %}
+{# Expected context: status in ('success','expired','invalid','already_verified'), message; GET /verify-email?token=... #}
+{% block title %}验证邮箱 · Manuscript Desk{% endblock %}
+{% block content %}<div class="auth-card"><p class="app-eyebrow">EMAIL VERIFICATION</p><h2>{% if status == 'success' %}邮箱已验证{% elif status == 'already_verified' %}邮箱已经验证{% else %}无法验证邮箱{% endif %}</h2><div class="account-alert {{ 'account-alert-success' if status in ['success','already_verified'] else 'account-alert-error' }}" role="status" aria-live="polite">{{ message | default('验证链接无效或已过期。', true) }}</div><div class="account-actions"><a class="account-button" href="/login">返回登录</a>{% if status in ['expired','invalid'] %}<a class="account-button account-button-secondary" href="/profile">重新发送验证邮件</a>{% endif %}</div></div>{% endblock %}

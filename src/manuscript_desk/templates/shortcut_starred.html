@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ '🔄 ' ~ shortcut_title if update_message else shortcut_title }}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{width:100%;max-width:100%;overflow-x:hidden;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;background:#f2f2f7;color:#1c1c1e;-webkit-font-smoothing:antialiased;font-size:14px}
+    .bar{display:flex;width:100%;align-items:center;gap:6px;padding:8px 12px;background:#fff;border-bottom:1px solid #e5e5ea;position:sticky;top:0;z-index:10;flex-wrap:wrap}
+    .chip{flex-shrink:0;padding:2px 8px;border-radius:10px;font-size:.68em;font-weight:600;color:#fff}
+    .c-t{background:{{ '#f7971e' if update_message else '#667eea' }}}.c-a{background:#34c759}.c-v{background:#ff9500}.c-r{background:#5ac8fa}.c-x{background:#ff3b30}.c-new{background:#ff3b30}
+    .spacer{flex:1}.ts{font-size:.62em;color:#8e8e93;white-space:normal;text-align:right;line-height:1.3;max-width:210px}
+    table{width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse;background:#fff;font-size:.82em}
+    col.c-num{width:7%}col.c-journal{width:11%}col.c-title{width:27%}col.c-status{width:36%}col.c-updated{width:19%}
+    th{background:#f8f8f8;color:#8e8e93;font-weight:600;font-size:.7em;text-transform:uppercase;letter-spacing:.3px;padding:6px 5px;text-align:left;position:sticky;top:37px;z-index:5;white-space:normal;overflow-wrap:anywhere}
+    td{padding:6px 5px;border-bottom:1px solid #f0f0f0;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;word-break:break-word}tr:last-child td{border-bottom:none}tr.changed{background:#fffbe6}
+    .n{color:#8e8e93;font-size:.8em;text-align:center}.j{font-weight:700;font-size:.78em;color:{{ '#f7971e' if update_message else '#667eea' }};white-space:normal}.tt{font-weight:500;white-space:normal;overflow-wrap:anywhere}
+    .st{display:inline-block;max-width:100%;font-size:.68em;font-weight:600;padding:2px 6px;border-radius:8px;white-space:normal;overflow-wrap:anywhere}.s-a{background:#d4edda;color:#155724}.s-v{background:#fff3cd;color:#856404}.s-rr{background:#ffe0cc;color:#7a3d00}.s-x{background:#f8d7da;color:#721c24}.s-u{background:#d1ecf1;color:#0c5460}.s-d{background:#e2e3e5;color:#383d41}
+    .change-badge{display:inline-block;font-size:.6em;color:#ff3b30;font-weight:700;margin-left:2px;vertical-align:super}.dt{font-size:.72em;color:#8e8e93;white-space:normal;overflow-wrap:anywhere}.empty{text-align:center;padding:40px 16px;color:#8e8e93}.waiting{text-align:center;padding:48px 18px;color:#636366}.continue{display:inline-block;margin-top:14px;padding:8px 14px;border-radius:14px;background:#f7971e;color:#fff;text-decoration:none;font-size:.82em;font-weight:700}
+  </style>
+</head>
+<body>
+{% set ns = namespace(total=0, accept=0, revision=0, review=0, reject=0, changed=0) %}
+{% for m in manuscripts %}
+  {% set ns.total = ns.total + 1 %}
+  {% if m.status_changed %}{% set ns.changed = ns.changed + 1 %}{% endif %}
+  {% if m.status == 'Accept' %}{% set ns.accept = ns.accept + 1 %}
+  {% elif m.status == 'Revision' %}{% set ns.revision = ns.revision + 1 %}
+  {% elif m.status == 'Under Review' %}{% set ns.review = ns.review + 1 %}
+  {% elif m.status in ['Reject','Reject and Resubmit'] %}{% set ns.reject = ns.reject + 1 %}{% endif %}
+{% endfor %}
+<div class="bar">
+  <span class="chip c-t">{{ ns.total }}</span>
+  {% if ns.changed %}<span class="chip c-new">Δ{{ ns.changed }}</span>{% endif %}
+  {% if ns.accept %}<span class="chip c-a">A{{ ns.accept }}</span>{% endif %}
+  {% if ns.revision %}<span class="chip c-v">R{{ ns.revision }}</span>{% endif %}
+  {% if ns.review %}<span class="chip c-r">UR{{ ns.review }}</span>{% endif %}
+  {% if ns.reject %}<span class="chip c-x">X{{ ns.reject }}</span>{% endif %}
+  <span class="spacer"></span>
+  <span class="ts">{% if update_message %}{{ update_message }}{% else %}只读{{ shortcut_label }}状态{% endif %}</span>
+</div>
+{% if waiting_timeout %}
+<div class="waiting">更新仍在进行，请点击下方按钮继续等待。<br><a class="continue" href="{{ continuation_url }}">继续等待更新结果</a></div>
+{% elif manuscripts %}
+<table>
+  <colgroup><col class="c-num"><col class="c-journal"><col class="c-title"><col class="c-status"><col class="c-updated"></colgroup>
+  <thead><tr><th>#</th><th>J</th><th>Title</th><th>Status</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for m in manuscripts %}
+    {% set title_words = (m.title or m.manuscript_id).split()[:3] %}
+    {% set short_title = title_words | join(' ') %}
+    {% if (m.title or m.manuscript_id).split() | length > 3 %}{% set short_title = short_title + '...' %}{% endif %}
+    {% set first_seen = m.status_pair_first_seen_at or '' %}
+    {% set first_seen_ago = m.status_pair_first_seen_ago or '' %}
+    <tr{% if m.status_changed %} class="changed"{% endif %}>
+      <td class="n">{{ loop.index }}</td>
+      <td class="j">{{ m.short_name or m.journal[:4] }}</td>
+      <td class="tt" title="{{ m.title or m.manuscript_id }}">{{ short_title }}</td>
+      <td>
+        {% set ds = m.detailed_status or m.status %}
+        {% set label = m.status if ds == m.status else m.status + ' (' + ds + ')' %}
+        {% if m.status == 'Accept' %}<span class="st s-a" title="{{ label }}">{{ label }}</span>
+        {% elif m.status == 'Revision' %}<span class="st s-v" title="{{ label }}">{{ label }}</span>
+        {% elif m.status == 'Reject and Resubmit' %}<span class="st s-rr" title="{{ label }}">R&amp;R ({{ ds }})</span>
+        {% elif m.status == 'Reject' %}<span class="st s-x" title="{{ label }}">{{ label }}</span>
+        {% elif m.status == 'Draft' %}<span class="st s-d" title="{{ label }}">{{ label }}</span>
+        {% else %}<span class="st s-u" title="{{ label }}">{{ label }}</span>{% endif %}
+        {% if m.status_changed %}<span class="change-badge">NEW</span>{% endif %}
+      </td>
+      <td class="dt" title="{{ first_seen }}">{{ first_seen_ago }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="empty">{{ shortcut_empty_message }}</div>{% endif %}
+</body>
+</html>

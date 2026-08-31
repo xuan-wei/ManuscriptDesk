@@ -1,0 +1,36 @@
+{% extends "auth_base.html" %}
+{% from "_macros.html" import csrf_input, form_errors, field_error %}
+{# Expected endpoints/context: GET /register, POST /register/send-code, POST /register; csrf_token, captcha_token, captcha_svg, error(s), field_errors, form_data. #}
+{% block title %}注册 · Manuscript Desk{% endblock %}
+{% block content %}
+<div class="auth-card auth-card-wide">
+  <p class="app-eyebrow">CREATE ACCOUNT</p><h2>创建你的工作区</h2><p>先完成验证码校验，再输入邮箱收到的一次性验证码。</p>
+  <ol class="account-stepper" aria-label="注册步骤"><li class="is-current" data-step="1" data-step-id="details"><span>账号信息</span></li><li data-step="2" data-step-id="verify"><span>邮箱验证</span></li></ol>
+  {{ form_errors(error, errors) }}
+  <form class="account-form" method="post" action="/register" novalidate>
+    {{ csrf_input(csrf_token) }}
+    <section data-account-step="details" aria-labelledby="register-details-title">
+      <h3 class="visually-hidden" id="register-details-title">账号信息</h3>
+      <div class="account-form">
+        <div class="account-field"><label for="display_name">显示名称 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="display_name" name="display_name" value="{{ form_data.display_name | default('', true) if form_data else '' }}" autocomplete="name" maxlength="100" required>{{ field_error('display_name', field_errors) }}</div>
+        <div class="account-field"><label for="username">用户名 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="username" name="username" value="{{ form_data.username | default('', true) if form_data else '' }}" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{2,31}" required aria-describedby="username-help"><p class="account-help" id="username-help">3–32 位，以字母开头，可使用字母、数字、下划线和连字符。</p>{{ field_error('username', field_errors) }}</div>
+        <div class="account-field"><label for="email">邮箱地址 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="email" type="email" name="email" value="{{ form_data.email | default('', true) if form_data else '' }}" autocomplete="email" inputmode="email" required>{{ field_error('email', field_errors) }}</div>
+        <div class="account-form-row">
+          <div class="account-field"><label for="password">密码 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="password" type="password" name="password" autocomplete="new-password" minlength="8" required aria-describedby="password-help"><p class="account-help" id="password-help">至少 8 个字符，并且至少包含一个字母和一个数字。</p></div>
+          <div class="account-field"><label for="confirm_password">确认密码 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="confirm_password" type="password" name="confirm_password" autocomplete="new-password" minlength="8" required></div>
+        </div>
+        <input type="hidden" name="captcha_token" value="{{ captcha_token | default('', true) }}">
+        <div class="account-captcha">
+          <div class="account-field"><label for="captcha_answer">图片验证码 <span class="account-required" aria-hidden="true">*</span></label><div class="account-captcha-image" aria-label="验证码图片">{{ captcha_svg | default('', true) | safe }}</div><input class="account-input" id="captcha_answer" name="captcha_answer" autocomplete="off" autocapitalize="characters" required></div>
+          <a class="account-button account-button-secondary" href="/register">换一张</a>
+        </div>
+        <button class="account-button" type="button" data-step-next="verify" data-send-code="/api/auth/register/send-code">发送邮箱验证码</button>
+      </div>
+    </section>
+    <section data-account-step="verify" aria-labelledby="register-verify-title" hidden>
+      <div class="account-form"><h3 id="register-verify-title">验证邮箱</h3><p class="account-help">输入发送到上述邮箱的 6 位验证码。验证码短时有效。</p><div class="account-field"><label for="code">邮箱验证码 <span class="account-required" aria-hidden="true">*</span></label><input class="account-input" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>{{ field_error('code', field_errors) }}</div><div class="account-actions"><button class="account-button account-button-secondary" type="button" data-step-back="details">返回修改</button><button class="account-button" type="submit">创建账号</button></div></div>
+    </section>
+  </form>
+  <div class="account-links"><a href="/login">已有账号？返回登录</a></div>
+</div>
+{% endblock %}

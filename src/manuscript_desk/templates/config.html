@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}期刊配置 · Manuscript Desk{% endblock %}
+{% block body_class %}page-config{% endblock %}
+{% block head %}
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+{% endblock %}
+{% block eyebrow %}<p class="app-eyebrow">SETTINGS</p>{% endblock %}
+{% block page_title %}期刊配置{% endblock %}
+{% block page_description %}<p>管理需要追踪的期刊、投稿系统与对应登录凭据。</p>{% endblock %}
+{% block page_actions %}<button class="app-button" id="add-config-button" type="button"><i class="fas fa-plus" aria-hidden="true"></i> 添加期刊</button>{% endblock %}
+{% block content %}
+{% if journal_configs %}
+<section class="account-card config-table-card" aria-labelledby="journal-table-title">
+  <div class="account-section-head"><div><h2 id="journal-table-title">已配置期刊</h2><p>横向比较投稿系统、账号、凭据和启用状态。</p></div></div>
+  <div class="account-table-wrap config-table-wrap" role="region" aria-label="期刊配置表，可横向滚动" tabindex="0">
+    <table class="account-table config-table">
+      <caption class="visually-hidden">当前账号的期刊配置</caption>
+      <thead><tr><th scope="col">期刊</th><th scope="col">投稿系统</th><th scope="col">登录账号与凭据</th><th scope="col">描述</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
+      <tbody>
+      {% for cfg in journal_configs %}
+        <tr id="config-row-{{ cfg.id }}">
+          <th scope="row"><span class="config-journal-name">{{ cfg.journal_name }}</span>{% if cfg.short_name %}<span class="account-badge">{{ cfg.short_name }}</span>{% endif %}</th>
+          <td>{{ 'Editorial Manager' if cfg.provider == 'editorial_manager' else 'ScholarOne' }}</td>
+          <td class="config-account-cell"><span class="config-username">{{ cfg.username or '—' }}</span><span class="config-credential {{ 'is-configured' if cfg.credential_configured else 'is-missing' }}">{{ '凭据已配置' if cfg.credential_configured else '凭据未配置' }}</span></td>
+          <td class="config-description">{% if cfg.description %}<span class="config-description-preview" title="{{ cfg.description }}" aria-label="完整描述：{{ cfg.description }}">{{ cfg.description[:32] }}{% if cfg.description|length > 32 %}…{% endif %}</span>{% else %}—{% endif %}</td>
+          <td><span class="account-badge {{ 'account-badge-success' if cfg.enabled else 'account-badge-danger' }}">{{ '已启用' if cfg.enabled else '已禁用' }}</span></td>
+          <td><div class="account-table-actions config-table-actions"><button class="account-button account-button-secondary edit-config-btn" type="button" data-config='{{ cfg | tojson | forceescape }}'>编辑</button><button class="account-button account-button-secondary toggle-config-btn" type="button" data-id="{{ cfg.id }}" data-enabled="{{ 'true' if cfg.enabled else 'false' }}">{{ '禁用' if cfg.enabled else '启用' }}</button><button class="account-button account-button-danger delete-config-btn" type="button" data-id="{{ cfg.id }}" data-name="{{ cfg.journal_name | e }}">删除</button></div></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<div class="account-card account-empty"><h3>还没有配置任何期刊</h3><p>点击“添加期刊”开始配置。</p></div>
+{% endif %}
+
+<div class="modal fade" id="configModal" tabindex="-1" aria-labelledby="modalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content config-modal-content">
+    <div class="modal-header"><h2 class="modal-title fs-5" id="modalTitle">添加期刊</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+    <div class="modal-body">
+      <div class="account-alert account-alert-error config-form-error" id="configFormError" role="alert" aria-live="assertive" hidden></div>
+      <form id="configForm"><input type="hidden" id="editId" value="">
+        <div class="row g-3">
+          <div class="col-md-4"><label class="form-label" for="provider">投稿系统 <span class="account-required">*</span></label><select class="form-select" id="provider" required><option value="scholarone">ScholarOne</option><option value="editorial_manager">Editorial Manager</option></select></div>
+          <div class="col-md-8"><label class="form-label" for="journalName">期刊名称 <span class="account-required">*</span></label><input type="text" class="form-control" id="journalName" required placeholder="如 Management Science"></div>
+          <div class="col-md-4"><label class="form-label" for="shortName">简称</label><input type="text" class="form-control" id="shortName" placeholder="如 MS"></div>
+          <div class="col-12"><label class="form-label" for="journalUrl">期刊 URL <span class="account-required">*</span></label><input type="url" class="form-control" id="journalUrl" required aria-describedby="providerHelp"><small class="text-muted" id="providerHelp"></small></div>
+          <div class="col-12"><label class="form-label" for="journalDesc">描述</label><input type="text" class="form-control" id="journalDesc" placeholder="期刊简要描述（可选）"></div>
+          <div class="col-md-6"><label class="form-label" for="username">登录用户名 <span class="account-required">*</span></label><input type="text" class="form-control" id="username" required autocomplete="username"></div>
+          <div class="col-md-6"><label class="form-label" for="password">登录密码 <span id="passwordRequired" class="account-required">*</span></label><div class="input-group"><input type="password" class="form-control" id="password" autocomplete="current-password" aria-describedby="passwordHelp"><button class="btn btn-outline-secondary" id="passwordToggle" type="button" aria-controls="password" aria-pressed="false" aria-label="显示密码">显示</button></div><small class="text-muted" id="passwordHelp">编辑时留空即保留原凭据。</small></div>
+          <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="enabled" checked><label class="form-check-label" for="enabled">启用该期刊</label></div></div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="button" class="btn btn-primary" id="saveConfigButton"><i class="fas fa-save" aria-hidden="true"></i> 保存</button></div>
+  </div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(() => {
+  const modalElement = document.getElementById('configModal');
+  const modal = new bootstrap.Modal(modalElement);
+  const form = document.getElementById('configForm');
+  const errorBox = document.getElementById('configFormError');
+  const saveButton = document.getElementById('saveConfigButton');
+  let returnFocus = null;
+
+  const field = (id) => document.getElementById(id);
+  const showError = (message) => { errorBox.textContent = message; errorBox.hidden = false; };
+  const clearError = () => { errorBox.textContent = ''; errorBox.hidden = true; };
+  const updateProviderHelp = () => {
+    const editorial = field('provider').value === 'editorial_manager';
+    field('journalUrl').placeholder = editorial ? '如 https://www.editorialmanager.com/decsup/default.aspx' : '如 https://mc.manuscriptcentral.com/ms';
+    field('providerHelp').textContent = editorial ? 'Editorial Manager 期刊入口地址' : 'ScholarOne / Manuscript Central 期刊地址';
+  };
+  const resetPasswordVisibility = () => {
+    field('password').type = 'password';
+    field('passwordToggle').textContent = '显示';
+    field('passwordToggle').setAttribute('aria-label', '显示密码');
+    field('passwordToggle').setAttribute('aria-pressed', 'false');
+  };
+  const openAdd = (button) => {
+    returnFocus = button;
+    form.reset(); clearError();
+    field('editId').value = '';
+    field('enabled').checked = true;
+    field('provider').value = 'scholarone';
+    field('password').required = true;
+    field('passwordRequired').hidden = false;
+    field('modalTitle').textContent = '添加期刊';
+    resetPasswordVisibility(); updateProviderHelp(); modal.show();
+  };
+  const openEdit = (button, config) => {
+    returnFocus = button;
+    clearError();
+    field('editId').value = config.id;
+    field('provider').value = config.provider || 'scholarone';
+    field('journalName').value = config.journal_name || '';
+    field('journalUrl').value = config.journal_url || '';
+    field('shortName').value = config.short_name || '';
+    field('journalDesc').value = config.description || '';
+    field('username').value = config.username || '';
+    field('password').value = '';
+    field('password').required = false;
+    field('passwordRequired').hidden = true;
+    field('enabled').checked = !!config.enabled;
+    field('modalTitle').textContent = '编辑期刊';
+    resetPasswordVisibility(); updateProviderHelp(); modal.show();
+  };
+
+  document.getElementById('add-config-button').addEventListener('click', (event) => openAdd(event.currentTarget));
+  document.querySelectorAll('.edit-config-btn').forEach((button) => button.addEventListener('click', () => openEdit(button, JSON.parse(button.dataset.config))));
+  field('provider').addEventListener('change', updateProviderHelp);
+  field('passwordToggle').addEventListener('click', () => {
+    const showing = field('password').type === 'text';
+    field('password').type = showing ? 'password' : 'text';
+    field('passwordToggle').textContent = showing ? '显示' : '隐藏';
+    field('passwordToggle').setAttribute('aria-label', showing ? '显示密码' : '隐藏密码');
+    field('passwordToggle').setAttribute('aria-pressed', String(!showing));
+  });
+  modalElement.addEventListener('hidden.bs.modal', () => returnFocus?.focus());
+
+  saveButton.addEventListener('click', async () => {
+    clearError();
+    if (!form.reportValidity()) return;
+    const editId = field('editId').value;
+    const data = {provider: field('provider').value, journal_name: field('journalName').value.trim(), journal_url: field('journalUrl').value.trim(), short_name: field('shortName').value.trim(), description: field('journalDesc').value.trim(), username: field('username').value.trim(), password: field('password').value, enabled: field('enabled').checked};
+    saveButton.disabled = true; saveButton.setAttribute('aria-busy', 'true'); saveButton.textContent = '正在保存…';
+    try {
+      const response = await fetch(editId ? `/api/journal-configs/${editId}` : '/api/journal-configs', {method: editId ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.detail || '未知错误');
+      modal.hide(); location.reload();
+    } catch (error) {
+      showError(`保存失败：${error.message}`);
+      saveButton.disabled = false; saveButton.removeAttribute('aria-busy'); saveButton.textContent = '保存';
+    }
+  });
+
+  document.querySelectorAll('.toggle-config-btn').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/journal-configs/${button.dataset.id}/enabled`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: button.dataset.enabled !== 'true'})});
+      if (!response.ok) throw new Error('操作失败');
+      location.reload();
+    } catch (error) { button.disabled = false; window.alert(error.message); }
+  }));
+  document.querySelectorAll('.delete-config-btn').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.confirm(`确认删除期刊「${button.dataset.name}」的配置？`)) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/journal-configs/${button.dataset.id}`, {method: 'DELETE'});
+      if (!response.ok) throw new Error('删除失败');
+      location.reload();
+    } catch (error) { button.disabled = false; window.alert(error.message); }
+  }));
+})();
+</script>
+{% endblock %}

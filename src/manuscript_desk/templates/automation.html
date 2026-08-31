@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}自动化任务 · Manuscript Desk{% endblock %}
+{% block body_class %}page-automation{% endblock %}
+{% block head %}<meta name="automation-csrf" content="{{ csrf_token }}"><link rel="stylesheet" href="/static/automation/automation.css"><style>.page-automation .page-shell{width:100%;margin:0}.page-automation .topbar{display:none}.page-automation .panel,.page-automation .metric{box-shadow:var(--app-shadow);border-color:var(--app-border-soft)}.page-automation dialog{z-index:1100}.page-automation dialog::backdrop{z-index:1090}</style>{% endblock %}
+{% block eyebrow %}<p class="app-eyebrow">AUTOMATION</p>{% endblock %}
+{% block page_title %}定时任务{% endblock %}
+{% block page_description %}<p>通过独立 Cron 管理稿件更新与邮件通知。</p>{% endblock %}
+{% block page_actions %}<button class="app-button" id="reload-jobs" type="button">重新加载任务</button>{% endblock %}
+{% block content %}<main class="page-shell">    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <section class="status-grid" aria-label="调度器概览">
+      <article class="metric"><span>调度器</span><strong id="scheduler-state">读取中</strong></article>
+      <article class="metric"><span>更新任务</span><strong id="update-count">—</strong></article>
+      <article class="metric"><span>邮件任务</span><strong id="email-count">—</strong></article>
+      <article class="metric"><span>更新进程</span><strong id="update-state">—</strong></article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">SCHEDULES</p><h2>更新 Cron</h2></div>
+        <button class="button" type="button" data-new-job="update">新增更新任务</button>
+      </div>
+      <div id="update-jobs" class="job-list empty-state">正在加载…</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">NOTIFICATIONS</p><h2>邮件 Cron</h2></div>
+        <button class="button" type="button" data-new-job="email">新增邮件任务</button>
+      </div>
+      <p class="notice">“仅新变化”会从创建任务时的当前状态建立基线；未读新状态不会重复发送。邮件中的“标记为已读”链接只处理邮件发送时仍未读且之后没有再次变化的状态。</p>
+      <div id="email-jobs" class="job-list empty-state">正在加载…</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">DELIVERY</p><h2>SMTP 设置</h2></div><span id="smtp-password-state" class="badge">读取中</span></div>
+      <form id="smtp-form" class="form-grid">
+        <label>SMTP 主机<input name="host" required autocomplete="off"></label>
+        <label>端口<input name="port" required type="number" min="1" max="65535"></label>
+        <label>TLS 模式<select name="security_mode"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option></select></label>
+        <label>用户名<input name="username" autocomplete="username"></label>
+        <label>发件地址<input name="sender_address" required type="email"></label>
+        <label>发件名称<input name="sender_name" autocomplete="organization"></label>
+        <label>连接超时（秒）<input name="connect_timeout_seconds" type="number" min="3" max="120" value="20"></label>
+        <div class="form-actions"><button class="button" type="submit">保存 SMTP</button><button class="button button-quiet" id="replace-password" type="button">替换密码</button><button class="button button-quiet" id="test-smtp" type="button">发送测试邮件</button></div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h2>最近运行</h2></div></div>
+      <div class="table-wrap"><table class="run-table"><colgroup><col class="run-col-task"><col class="run-col-kind"><col class="run-col-start"><col class="run-col-status"><col class="run-col-summary"></colgroup><thead><tr><th>任务</th><th>类型</th><th>开始</th><th>结果</th><th>摘要</th></tr></thead><tbody id="run-history"><tr><td colspan="5">正在加载…</td></tr></tbody></table></div>
+    </section>
+</main>  <dialog id="job-dialog">
+    <form id="job-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">JOB EDITOR</p><h2 id="job-dialog-title">任务</h2></div><button class="icon-button" type="button" data-close-dialog="job-dialog" aria-label="关闭">×</button></div>
+      <input name="id" type="hidden"><input name="kind" type="hidden">
+      <label>任务名称<input name="name" required maxlength="100"></label>
+      <div class="two-cols"><label>Cron（分 时 日 月 周）<input name="cron_expression" required placeholder="0 7 * * *"></label><label>IANA 时区<input name="timezone" required value="Asia/Shanghai" placeholder="Asia/Shanghai"></label></div>
+      <div id="email-fields" hidden>
+        <div class="two-cols"><label>稿件范围<select name="manuscript_scope"><option value="starred">标星稿件</option><option value="all">全部稿件</option></select></label><label>发送策略<select name="delivery_policy"><option value="changes_only">仅新变化</option><option value="always">每次都发送</option></select></label></div>
+        <label>收件人（每行一个）<textarea name="recipients" rows="4" placeholder="name@example.com"></textarea></label>
+      </div>
+      <label class="check"><input name="enabled" type="checkbox" checked> 启用此任务</label>
+      <div id="cron-preview" class="preview" aria-live="polite"></div>
+      <div class="form-actions"><button class="button button-quiet" id="preview-cron" type="button">预览时间</button><button class="button" value="default" type="submit">保存任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="password-dialog"><form id="password-form" method="dialog"><div class="dialog-heading"><h2>替换 SMTP 密码</h2><button class="icon-button" type="button" data-close-dialog="password-dialog" aria-label="关闭">×</button></div><p class="notice">密码保存后不会再次显示，也不会写入数据库或日志。</p><label>新密码<input name="password" type="password" required autocomplete="new-password"></label><label>确认密码<input name="confirm_password" type="password" required autocomplete="new-password"></label><div class="form-actions"><button class="button" type="submit">安全保存</button></div></form></dialog>
+  <dialog id="run-summary-dialog"><div class="run-summary-dialog-body"><div class="dialog-heading"><div><p class="eyebrow">RUN DETAILS</p><h2>运行摘要</h2></div><button class="icon-button" type="button" data-close-dialog="run-summary-dialog" aria-label="关闭">×</button></div><pre id="run-summary-detail" class="run-summary-detail" tabindex="0"></pre><div class="form-actions"><button class="button button-quiet" type="button" data-close-dialog="run-summary-dialog">关闭</button></div></div></dialog>
+{% endblock %}
+{% block scripts %}<script defer src="/static/automation/automation.js"></script>{% endblock %}

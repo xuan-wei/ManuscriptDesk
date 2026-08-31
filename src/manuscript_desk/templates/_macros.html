@@ -1,0 +1,41 @@
+{% macro icon(name) -%}
+<svg class="app-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  {% if name == 'papers' %}<path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 11h6M9 15h6"/>
+  {% elif name == 'star' %}<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>
+  {% elif name == 'archive' %}<path d="M4 7h16v13H4zM3 3h18v4H3zM9 11h6"/>
+  {% elif name == 'layers' %}<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>
+  {% elif name == 'link' %}<path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/>
+  {% elif name == 'clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+  {% elif name == 'settings' %}<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>
+  {% elif name == 'users' %}<path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M17 11a4 4 0 0 1 4 4v2M16 3.2a4 4 0 0 1 0 7.6"/>
+  {% elif name == 'user' %}<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>
+  {% elif name == 'mail' %}<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
+  {% elif name == 'shield' %}<path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6z"/><path d="m9 12 2 2 4-4"/>
+  {% elif name == 'activity' %}<path d="M3 12h4l2-7 4 14 2-7h6"/>
+  {% elif name == 'logout' %}<path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/>
+  {% elif name == 'menu' %}<path d="M4 7h16M4 12h16M4 17h16"/>
+  {% elif name == 'close' %}<path d="m6 6 12 12M18 6 6 18"/>
+  {% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro nav_link(request, target, href, label, icon_name) -%}
+<a class="app-nav-link{% if is_nav_active(request, target) %} is-active{% endif %}" href="{{ href }}"{% if is_nav_active(request, target) %} aria-current="page"{% endif %}>
+  {{ icon(icon_name) }}<span>{{ label }}</span>
+</a>
+{%- endmacro %}
+
+{% macro csrf_input(csrf_token) -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token | default('', true) }}">
+{%- endmacro %}
+
+{% macro form_errors(error=None, errors=None) -%}
+{% if error or errors %}<div class="account-alert account-alert-error" role="alert" aria-live="assertive">
+  {% if error %}<p>{{ error }}</p>{% endif %}
+  {% if errors %}<ul>{% for item in errors %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+</div>{% else %}<div class="account-live" aria-live="polite" aria-atomic="true"></div>{% endif %}
+{%- endmacro %}
+
+{% macro field_error(name, field_errors=None) -%}
+{% if field_errors and field_errors.get(name) %}<p class="account-field-error" id="{{ name }}-error">{{ field_errors.get(name) }}</p>{% endif %}
+{%- endmacro %}

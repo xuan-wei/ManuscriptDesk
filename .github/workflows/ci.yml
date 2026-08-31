@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m build
+      - run: pytest --cov=manuscript_desk --cov-report=term-missing
+      - run: ruff format --check src tests
+      - run: ruff check src tests
+      - run: mypy src/manuscript_desk
+      - run: bandit -q -r src/manuscript_desk
+      - run: pip-audit
+      - run: python scripts/check_public_tree.py
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --pull --no-cache -t manuscript-desk:ci .
+      - run: python scripts/init_deployment.py "$RUNNER_TEMP/manuscript-desk" --public-base-url http://127.0.0.1:8008 --admin-email admin@example.com
+      - run: docker compose -f "$RUNNER_TEMP/manuscript-desk/deployment/compose.yml" config --quiet

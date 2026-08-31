@@ -1,0 +1,30 @@
+{% extends "auth_base.html" %}
+{% from "_macros.html" import csrf_input, form_errors, field_error %}
+{# Expected endpoint/context: POST /login; csrf_token, error, field_errors, email, registration_enabled. #}
+{% block title %}登录 · Manuscript Desk{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <p class="app-eyebrow">WELCOME BACK</p>
+  <h2>登录工作台</h2>
+  <p>使用用户名或邮箱和密码继续查看你的稿件状态。</p>
+  {{ form_errors(error, errors) }}
+  <form class="account-form" method="post" action="/login" novalidate>
+    {{ csrf_input(csrf_token) }}
+    <div class="account-field">
+      <label for="identifier">用户名或邮箱 <span class="account-required" aria-hidden="true">*</span></label>
+      <input class="account-input" id="identifier" type="text" name="identifier" value="{{ identifier | default('', true) }}" autocomplete="username" required autofocus{% if field_errors and field_errors.get('identifier') %} aria-invalid="true" aria-describedby="identifier-error"{% endif %}>
+      {{ field_error('identifier', field_errors) }}
+    </div>
+    <div class="account-field">
+      <label for="password">密码 <span class="account-required" aria-hidden="true">*</span></label>
+      <input class="account-input" id="password" type="password" name="password" autocomplete="current-password" required{% if field_errors and field_errors.get('password') %} aria-invalid="true" aria-describedby="password-error"{% endif %}>
+      {{ field_error('password', field_errors) }}
+    </div>
+    <button class="account-button" type="submit">登录</button>
+  </form>
+  <div class="account-links">
+    <a href="/forgot-password">忘记密码？</a>
+    {% if registration_enabled %}<a href="/register">创建账号</a>{% endif %}
+  </div>
+</div>
+{% endblock %}
