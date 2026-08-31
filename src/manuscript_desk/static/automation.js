@@ -14,6 +14,11 @@ const phaseLabels = {
   failed: '失败',
   cancelled: '已取消',
 };
+const scopeLabels = {
+  starred: '标星',
+  working: '进行中',
+  all: '全部',
+};
 const resultLabels = {
   success: '成功',
   partial: '部分成功',
@@ -59,7 +64,7 @@ function activeLabel(job) {
 
 function jobCard(job) {
   const recipients = job.kind === 'email'
-    ? `<div class="job-meta">${job.manuscript_scope === 'starred' ? '标星' : '全部'} · ${job.delivery_policy === 'always' ? '每次发送' : '仅新变化'}<br>${(job.recipients || []).map(esc).join('<br>')}</div>`
+    ? `<div class="job-meta">${esc(scopeLabels[job.manuscript_scope] || job.manuscript_scope || '标星')} · ${job.delivery_policy === 'always' ? '每次发送' : '仅新变化'}<br>${(job.recipients || []).map(esc).join('<br>')}</div>`
     : '<div class="job-meta">全部启用期刊</div>';
   const active = Boolean(job.active_request);
   const currentStatus = active ? activeLabel(job) : resultLabels[job.last_status] || job.last_status || '尚未运行';

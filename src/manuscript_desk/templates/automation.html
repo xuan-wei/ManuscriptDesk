@@ -57,7 +57,7 @@
       <label>任务名称<input name="name" required maxlength="100"></label>
       <div class="two-cols"><label>Cron（分 时 日 月 周）<input name="cron_expression" required placeholder="0 7 * * *"></label><label>IANA 时区<input name="timezone" required value="Asia/Shanghai" placeholder="Asia/Shanghai"></label></div>
       <div id="email-fields" hidden>
-        <div class="two-cols"><label>稿件范围<select name="manuscript_scope"><option value="starred">标星稿件</option><option value="all">全部稿件</option></select></label><label>发送策略<select name="delivery_policy"><option value="changes_only">仅新变化</option><option value="always">每次都发送</option></select></label></div>
+        <div class="two-cols"><label>稿件范围<select name="manuscript_scope"><option value="starred">标星稿件</option><option value="working">进行中稿件</option><option value="all">全部稿件</option></select></label><label>发送策略<select name="delivery_policy"><option value="changes_only">仅新变化</option><option value="always">每次都发送</option></select></label></div>
         <label>收件人（每行一个）<textarea name="recipients" rows="4" placeholder="name@example.com"></textarea></label>
       </div>
       <label class="check"><input name="enabled" type="checkbox" checked> 启用此任务</label>

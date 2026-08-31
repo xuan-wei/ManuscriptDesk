@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from . import APP_SCHEMA_VERSION
 from .account_mail import AccountMailer
-from .accounts import AccountService
+from .accounts import AccountService, InvitationConflict
 from .captcha import CaptchaService
 from .repository import Repository
 from .schema import assert_schema, connect
@@ -377,23 +377,33 @@ def create_app(
 
     @app.post("/api/admin/invitations")
     async def create_invitation(data: InviteRequest, session: dict = Depends(require_admin_csrf)):
+        try:
+            invitation = accounts.create_invitation(session["user_id"], data.email, data.display_name, data.username)
+        except (InvitationConflict, ValueError, PermissionError):
+            raise generic_error()
+        if invitation.status == "already_pending":
+            return {"ok": True, "status": "already_pending"}
         if account_mailer is None:
             raise generic_error(503)
-        user_id = None
         try:
-            user_id, token = accounts.create_invitation(
-                session["user_id"], data.email, data.display_name, data.username
-            )
-            account_mailer.send_invitation(normalize_email(data.email), data.display_name, token)
-        except (ValueError, PermissionError):
-            raise generic_error()
+            account_mailer.send_invitation(normalize_email(data.email), data.display_name, invitation.token)
         except Exception:
-            # Do not leave an unusable pending account if delivery failed.
-            if user_id is not None:
-                with repository.connection() as conn:
-                    conn.execute("DELETE FROM users WHERE id=? AND password_scheme='activation_pending'", (user_id,))
             raise generic_error(503)
-        return {"ok": True}
+        return {"ok": True, "status": "sent"}
+
+    @app.post("/api/admin/invitations/{user_id}/resend")
+    async def resend_invitation(user_id: int, session: dict = Depends(require_admin_csrf)):
+        try:
+            invitation = accounts.reissue_invitation(session["user_id"], user_id)
+        except (LookupError, ValueError, PermissionError):
+            raise generic_error()
+        if account_mailer is None:
+            raise generic_error(503)
+        try:
+            account_mailer.send_invitation(invitation.email, invitation.display_name, invitation.token)
+        except Exception:
+            raise generic_error(503)
+        return {"ok": True, "status": "sent"}
 
     @app.post("/api/auth/invitations/activate")
     async def activate_invitation(data: ActivateRequest):

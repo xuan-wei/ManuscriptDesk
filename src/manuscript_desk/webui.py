@@ -37,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, FileSystemLoader
 
-from .accounts import AccountService
+from .accounts import AccountService, InvitationConflict
 from .captcha import CaptchaService
 from .provider_origins import get_provider_origin, normalize_provider_url
 from .repository import Repository
@@ -981,28 +981,72 @@ def install_ui(
         email = str(form.get("email") or "")
         display_name = str(form.get("display_name") or "")
         username = str(form.get("username") or "")
-        user_id = None
-        raw_invitation_url = None
         try:
-            user_id, token = accounts.create_invitation(session["user_id"], email, display_name, username)
-        except (ValueError, PermissionError):
+            invitation = accounts.create_invitation(session["user_id"], email, display_name, username)
+        except InvitationConflict as exc:
+            message = "该邮箱已有账号。" if exc.field == "email" else "该用户名已被使用，请更换用户名。"
+            return render("admin_users.html", request, session, error=message, **admin_users_context())
+        except ValueError:
+            return render("admin_users.html", request, session, error="邮箱或用户名格式无效。", **admin_users_context())
+        except PermissionError:
             return render(
-                "admin_users.html", request, session, error="无法创建邀请（邮箱可能已存在）。", **admin_users_context()
+                "admin_users.html", request, session, status_code=403, error="无权创建邀请。", **admin_users_context()
+            )
+        if invitation.status == "already_pending":
+            return render(
+                "admin_users.html",
+                request,
+                session,
+                success="该用户的邀请已存在，无需重复创建。",
+                **admin_users_context(),
             )
         try:
             if account_mailer is None:
                 raise RuntimeError("mailer unavailable")
-            account_mailer.send_invitation(normalize_email(email), display_name, token)
+            account_mailer.send_invitation(normalize_email(email), display_name, invitation.token)
         except Exception:
-            raw_invitation_url = f"{public_base_url.rstrip('/')}/accept-invite#token={token}"
-        message = "邀请已发送。" if raw_invitation_url is None else None
+            return render(
+                "admin_users.html",
+                request,
+                session,
+                error="邀请已创建，但邮件发送状态无法确认。请让收件人先检查邮箱；如需重发，请使用“重新发送邀请”。",
+                **admin_users_context(),
+            )
+        return render("admin_users.html", request, session, success="邀请已发送。", **admin_users_context())
+
+    @app.post("/admin/users/{user_id}/resend-invitation")
+    async def admin_resend_invitation(request: Request, user_id: int):
+        session, error = require_admin_page(request)
+        if error:
+            return error
+        form = await request.form()
+        if not form_csrf_ok(request, session, form):
+            return render(
+                "admin_users.html",
+                request,
+                session,
+                status_code=403,
+                error="会话已过期，请重试。",
+                **admin_users_context(),
+            )
+        try:
+            invitation = accounts.reissue_invitation(session["user_id"], user_id)
+        except (LookupError, ValueError, PermissionError):
+            return render("admin_users.html", request, session, error="无法重新发送该邀请。", **admin_users_context())
+        try:
+            if account_mailer is None:
+                raise RuntimeError("mailer unavailable")
+            account_mailer.send_invitation(invitation.email, invitation.display_name, invitation.token)
+        except Exception:
+            return render(
+                "admin_users.html",
+                request,
+                session,
+                error="新邀请已创建，但邮件发送状态无法确认。再次重发会使当前链接失效。",
+                **admin_users_context(),
+            )
         return render(
-            "admin_users.html",
-            request,
-            session,
-            success=message,
-            raw_invitation_url=raw_invitation_url,
-            **admin_users_context(),
+            "admin_users.html", request, session, success="邀请已重新发送，旧链接已失效。", **admin_users_context()
         )
 
     @app.post("/admin/users/{user_id}/disable")
@@ -1845,8 +1889,11 @@ def install_ui(
         kind = str(data.get("kind") or "")
         payload = {}
         if kind == "email":
+            manuscript_scope = data.get("manuscript_scope", "starred")
+            if manuscript_scope not in {"all", "starred", "working"}:
+                raise ValueError("invalid manuscript scope")
             payload = {
-                "manuscript_scope": "starred" if data.get("manuscript_scope") != "all" else "all",
+                "manuscript_scope": manuscript_scope,
                 "delivery_policy": "always" if data.get("delivery_policy") == "always" else "changes_only",
             }
         return {

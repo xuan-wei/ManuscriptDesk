@@ -57,13 +57,61 @@ def test_invitation_activation_and_admin_authorization(tmp_path):
     )
     with pytest.raises(PermissionError):
         service.create_invitation(non_admin, "new@example.test", "New")
-    invited, token = service.create_invitation(admin, "new@example.test", "New")
+    invitation = service.create_invitation(admin, "new@example.test", "New")
+    assert invitation.status == "created" and invitation.token
+    duplicate = service.create_invitation(admin, "new@example.test", "New")
+    assert duplicate.status == "already_pending" and duplicate.user_id == invitation.user_id
+    assert duplicate.token is None
     assert service.activate_invitation("wrong-token", hash_password("another correct horse staple2")) is None
-    assert service.activate_invitation(token, hash_password("another correct horse staple2")) == invited
-    user = repo.get_user(invited)
+    assert (
+        service.activate_invitation(invitation.token, hash_password("another correct horse staple2"))
+        == invitation.user_id
+    )
+    user = repo.get_user(invitation.user_id)
     assert user["is_active"] == 1
     assert user["email_verified_at"] is not None
-    assert service.activate_invitation(token, hash_password("another correct horse staple2")) is None
+    assert service.activate_invitation(invitation.token, hash_password("another correct horse staple2")) is None
+
+
+def test_reissue_invitation_revokes_old_token(tmp_path):
+    repo, service = setup_service(tmp_path)
+    admin = repo.create_user(
+        "admin@example.test", "Admin", hash_password("correct horse battery staple1"), is_admin=True, verified=True
+    )
+    invitation = service.create_invitation(admin, "new@example.test", "New", "newuser")
+    reissued = service.reissue_invitation(admin, invitation.user_id)
+    assert reissued.email == "new@example.test"
+    assert reissued.token != invitation.token
+    password_hash = hash_password("another correct horse staple2")
+    assert service.activate_invitation(invitation.token, password_hash) is None
+    assert service.activate_invitation(reissued.token, password_hash) == invitation.user_id
+
+
+def test_invitation_conflicts_are_classified(tmp_path):
+    from manuscript_desk.accounts import InvitationConflict
+
+    repo, service = setup_service(tmp_path)
+    admin = repo.create_user(
+        "admin@example.test",
+        "Admin",
+        hash_password("correct horse battery staple1"),
+        username="adminuser",
+        is_admin=True,
+        verified=True,
+    )
+    repo.create_user(
+        "existing@example.test",
+        "Existing",
+        hash_password("correct horse battery staple1"),
+        username="existinguser",
+        verified=True,
+    )
+    with pytest.raises(InvitationConflict, match="email") as email_conflict:
+        service.create_invitation(admin, "existing@example.test", "New", "differentuser")
+    assert email_conflict.value.field == "email"
+    with pytest.raises(InvitationConflict, match="username") as username_conflict:
+        service.create_invitation(admin, "different@example.test", "New", "existinguser")
+    assert username_conflict.value.field == "username"
 
 
 def test_disable_revokes_access_and_sets_30_day_purge(tmp_path):

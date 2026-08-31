@@ -96,6 +96,23 @@
     });
   });
 
+  document.querySelectorAll('[data-submit-once]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      if (form.dataset.submitted === 'true') {
+        event.preventDefault();
+        return;
+      }
+      if (!form.checkValidity()) return;
+      form.dataset.submitted = 'true';
+      form.setAttribute('aria-busy', 'true');
+      const button = form.querySelector('button[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = '正在发送…';
+      }
+    });
+  });
+
   document.querySelectorAll('[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (event) => {
       if (!window.confirm(form.dataset.confirm)) event.preventDefault();

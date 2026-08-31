@@ -491,6 +491,68 @@ def test_digest_html_marks_only_unread_statuses(monkeypatch, tmp_path):
     assert [row["original_id"] for row in delivery_items] == ["NEW"]
 
 
+def test_working_digest_only_includes_visible_ongoing_manuscripts(monkeypatch, tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    smtp_ref = secrets.write(str(alice), "smtp", "smtp-password")
+    repo.save_user_smtp(
+        alice,
+        {
+            "host": "smtp.example.test",
+            "port": 465,
+            "security_mode": "ssl",
+            "sender_address": "alice@example.test",
+            "credential_ref": smtp_ref,
+        },
+    )
+    config_id = repo.create_journal_config(
+        alice, {"journal_name": "Journal", "journal_url": "https://example.test", "username": "alice"}
+    )
+    for original_id, status in (
+        ("REVIEW", "Under Review"),
+        ("REVISION", "Revision"),
+        ("ACCEPTED", "Accept"),
+        ("HIDDEN", "Under Review"),
+    ):
+        repo.save_manuscript(
+            alice,
+            config_id,
+            {
+                "original_id": original_id,
+                "manuscript_id": original_id,
+                "title": original_id,
+                "journal": "Journal",
+                "status": status,
+                "detailed_status": status,
+            },
+        )
+    repo.set_hidden(alice, "HIDDEN", True)
+    job_id = repo.save_automation_job(
+        alice,
+        {
+            "kind": "email",
+            "name": "Working Digest",
+            "cron_expression": "0 7 * * *",
+            "payload": {"manuscript_scope": "working", "delivery_policy": "always"},
+            "recipients": ["alice@example.test"],
+        },
+    )
+    with repo.connection() as conn:
+        run_id = conn.execute(
+            "INSERT INTO automation_job_runs(owner_user_id,job_id,status) VALUES(?,?,'running')",
+            (alice, job_id),
+        ).lastrowid
+    RecordingSMTP.messages = []
+    monkeypatch.setattr("manuscript_desk.automation_runtime.smtplib.SMTP_SSL", RecordingSMTP)
+    runtime = AutomationRuntime(repo, secrets, "https://desk.example.test")
+
+    status, summary = runtime._run_email(alice, job_id, run_id)
+
+    assert status == "success" and summary["item_count"] == 2
+    plain = RecordingSMTP.messages[-1].get_body(preferencelist=("plain",)).get_content()
+    assert "REVIEW" in plain and "REVISION" in plain
+    assert "ACCEPTED" not in plain and "HIDDEN" not in plain
+
+
 def test_digest_without_unread_status_has_no_mark_read_link(monkeypatch, tmp_path):
     repo, secrets, alice, _ = setup(tmp_path)
     smtp_ref = secrets.write(str(alice), "smtp", "smtp-password")

@@ -663,6 +663,56 @@ def test_manual_update_enqueue_and_status(tmp_path):
     assert status["running"] is True and status["status"] == "queued"
 
 
+def test_admin_invitation_html_is_idempotent_and_token_free(tmp_path):
+    repo, _, mailer, app = build(tmp_path)
+    add_user(repo, "admin@example.test", admin=True)
+    client = TestClient(app)
+    html_login(client, "admin@example.test")
+    csrf = session_csrf(client)
+    payload = {
+        "email": "invite@example.test",
+        "username": "inviteuser",
+        "display_name": "Invite",
+        "csrf_token": csrf,
+    }
+
+    first = client.post("/admin/users/invite", data=payload)
+    assert first.status_code == 200 and "邀请已发送。" in first.text
+    assert len(mailer.invitations) == 1
+    second = client.post("/admin/users/invite", data=payload)
+    assert second.status_code == 200 and "邀请已存在，无需重复创建" in second.text
+    assert len(mailer.invitations) == 1
+    assert "raw-token-dialog" not in second.text
+    assert "#token=" not in second.text
+    with repo.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users WHERE email='invite@example.test'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM activation_tokens").fetchone()[0] == 1
+
+
+def test_admin_invitation_resend_rotates_token(tmp_path):
+    repo, _, mailer, app = build(tmp_path)
+    add_user(repo, "admin@example.test", admin=True)
+    client = TestClient(app)
+    html_login(client, "admin@example.test")
+    csrf = session_csrf(client)
+    client.post(
+        "/admin/users/invite",
+        data={
+            "email": "invite@example.test",
+            "username": "inviteuser",
+            "display_name": "Invite",
+            "csrf_token": csrf,
+        },
+    )
+    invited = repo.get_user_by_email("invite@example.test")
+    first_token = mailer.invitations[-1][1]
+    response = client.post(f"/admin/users/{invited['id']}/resend-invitation", data={"csrf_token": csrf})
+    assert response.status_code == 200 and "旧链接已失效" in response.text
+    second_token = mailer.invitations[-1][1]
+    assert second_token != first_token
+    assert len(mailer.invitations) == 2
+
+
 def test_automation_jobs_owner_scoped_and_cron_preview(tmp_path):
     repo, _, _, app = build(tmp_path)
     add_user(repo, "alice@example.test")
@@ -686,7 +736,7 @@ def test_automation_jobs_owner_scoped_and_cron_preview(tmp_path):
             "cron_expression": "0 7 * * *",
             "timezone": "Asia/Shanghai",
             "enabled": True,
-            "manuscript_scope": "starred",
+            "manuscript_scope": "working",
             "delivery_policy": "changes_only",
             "recipients": ["alice@example.test"],
         },
@@ -695,6 +745,22 @@ def test_automation_jobs_owner_scoped_and_cron_preview(tmp_path):
     assert created.status_code == 200
     jobs = client.get("/api/automation/jobs").json()
     assert len(jobs["jobs"]) == 1 and jobs["jobs"][0]["recipients"] == ["alice@example.test"]
+    assert jobs["jobs"][0]["manuscript_scope"] == "working"
+    stored_job = repo.get_automation_job(repo.get_user_by_email("alice@example.test")["id"], created.json()["id"])
+    assert stored_job["payload"]["manuscript_scope"] == "working"
+    invalid_scope = client.post(
+        "/api/automation/jobs",
+        json={
+            "kind": "email",
+            "name": "Invalid",
+            "cron_expression": "0 7 * * *",
+            "timezone": "Asia/Shanghai",
+            "manuscript_scope": "unknown",
+            "recipients": ["alice@example.test"],
+        },
+        headers=headers,
+    )
+    assert invalid_scope.status_code == 400
     assert jobs["scheduler"]["is_running"] is False
 
     rare_preview = client.post(

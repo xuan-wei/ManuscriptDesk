@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +24,27 @@ class IssuedChallenge:
     challenge_id: int
     code: str
     expires_at: str
+
+
+@dataclass(frozen=True)
+class InvitationResult:
+    status: str
+    user_id: int
+    token: str | None = None
+
+
+@dataclass(frozen=True)
+class ReissuedInvitation:
+    user_id: int
+    email: str
+    display_name: str
+    token: str
+
+
+class InvitationConflict(ValueError):
+    def __init__(self, field: str):
+        super().__init__(f"{field} already in use")
+        self.field = field
 
 
 class AccountService:
@@ -98,12 +120,29 @@ class AccountService:
             conn.commit()
             return result.rowcount == 1
 
+    def _invitation_conflict(self, conn, email: str, username: str) -> InvitationResult | InvitationConflict | None:
+        email_user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        username_user = conn.execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
+        if (
+            email_user
+            and username_user
+            and email_user["id"] == username_user["id"]
+            and email_user["password_scheme"] == "activation_pending"
+        ):
+            return InvitationResult("already_pending", email_user["id"])
+        if email_user:
+            return InvitationConflict("email")
+        if username_user:
+            return InvitationConflict("username")
+        return None
+
     def create_invitation(
         self, admin_user_id: int, email: str, display_name: str, username: str | None = None, ttl_hours: int = 48
-    ) -> tuple[int, str]:
+    ) -> InvitationResult:
         require_owner(admin_user_id)
         email = normalize_email(email)
         username = normalize_username(username or email.split("@", 1)[0])
+        display_name = display_name.strip()
         raw_token = random_token()
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
         with self.repository.connection(immediate=True) as conn:
@@ -111,27 +150,76 @@ class AccountService:
             if not admin or not admin["is_admin"] or not admin["is_active"]:
                 conn.rollback()
                 raise PermissionError("active administrator required")
-            if conn.execute(
-                "SELECT 1 FROM users WHERE email=? OR username=? COLLATE NOCASE", (email, username)
-            ).fetchone():
+            conflict = self._invitation_conflict(conn, email, username)
+            if isinstance(conflict, InvitationResult):
                 conn.rollback()
-                raise ValueError("account already exists")
-            user_id = conn.execute(
-                """INSERT INTO users(email,username,display_name,password_hash,password_scheme,is_admin,is_active)
-                   VALUES(?,?,?,?,'activation_pending',0,0)""",
-                (email, username, display_name.strip(), "!pending"),
-            ).lastrowid
-            conn.execute(
-                """INSERT INTO activation_tokens(target_user_id,token_hash,purpose,expires_at,created_by_user_id)
-                   VALUES(?,?,'invite',?,?)""",
-                (user_id, token_hash(raw_token), expires_at, admin_user_id),
-            )
+                return conflict
+            if conflict:
+                conn.rollback()
+                raise conflict
+            try:
+                user_id = conn.execute(
+                    """INSERT INTO users(email,username,display_name,password_hash,password_scheme,is_admin,is_active)
+                       VALUES(?,?,?,?,'activation_pending',0,0)""",
+                    (email, username, display_name, "!pending"),
+                ).lastrowid
+                conn.execute(
+                    """INSERT INTO activation_tokens(target_user_id,token_hash,purpose,expires_at,created_by_user_id)
+                       VALUES(?,?,'invite',?,?)""",
+                    (user_id, token_hash(raw_token), expires_at, admin_user_id),
+                )
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                with self.repository.connection() as retry_conn:
+                    conflict = self._invitation_conflict(retry_conn, email, username)
+                if isinstance(conflict, InvitationResult):
+                    return conflict
+                if conflict:
+                    raise conflict
+                raise
             conn.execute(
                 "INSERT INTO audit_events(actor_user_id,target_user_id,action,outcome,metadata_json) VALUES(?,?,'invite_user','success',?)",
                 (admin_user_id, user_id, json.dumps({"email_hash": self._subject_hash(email)}, separators=(",", ":"))),
             )
             conn.commit()
-        return user_id, raw_token
+        return InvitationResult("created", user_id, raw_token)
+
+    def reissue_invitation(self, admin_user_id: int, target_user_id: int, ttl_hours: int = 48) -> ReissuedInvitation:
+        require_owner(admin_user_id)
+        require_owner(target_user_id)
+        raw_token = random_token()
+        now = datetime.now(timezone.utc).isoformat()
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
+        with self.repository.connection(immediate=True) as conn:
+            admin = conn.execute("SELECT is_admin,is_active FROM users WHERE id=?", (admin_user_id,)).fetchone()
+            target = conn.execute(
+                "SELECT id,email,display_name,password_scheme,is_active FROM users WHERE id=?", (target_user_id,)
+            ).fetchone()
+            if not admin or not admin["is_admin"] or not admin["is_active"]:
+                conn.rollback()
+                raise PermissionError("active administrator required")
+            if not target:
+                conn.rollback()
+                raise LookupError("user not found")
+            if target["password_scheme"] != "activation_pending" or target["is_active"]:
+                conn.rollback()
+                raise ValueError("invitation is not pending")
+            conn.execute(
+                """UPDATE activation_tokens SET revoked_at=?
+                   WHERE target_user_id=? AND purpose='invite' AND consumed_at IS NULL AND revoked_at IS NULL""",
+                (now, target_user_id),
+            )
+            conn.execute(
+                """INSERT INTO activation_tokens(target_user_id,token_hash,purpose,expires_at,created_by_user_id)
+                   VALUES(?,?,'invite',?,?)""",
+                (target_user_id, token_hash(raw_token), expires_at, admin_user_id),
+            )
+            conn.execute(
+                "INSERT INTO audit_events(actor_user_id,target_user_id,action,outcome) VALUES(?,?,'resend_invitation','success')",
+                (admin_user_id, target_user_id),
+            )
+            conn.commit()
+        return ReissuedInvitation(target_user_id, target["email"], target["display_name"], raw_token)
 
     def activate_invitation(self, raw_token: str, password_hash: str) -> int | None:
         now = datetime.now(timezone.utc).isoformat()
