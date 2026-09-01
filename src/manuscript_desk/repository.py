@@ -19,6 +19,7 @@ def require_owner(owner_user_id: int) -> int:
 
 def _safe_tracking_error(value: object) -> str:
     allowed = {
+        "browser_start_failed": "browser_start_failed",
         "browser_timeout": "browser_timeout",
         "credentials_unavailable": "credentials_unavailable",
         "empty_result_anomaly": "empty_result_anomaly",

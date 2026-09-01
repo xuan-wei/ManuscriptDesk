@@ -907,69 +907,70 @@
             }
         }
 
-        // 轮询进度（可从外部调用，startedAt 用于计算耗时）
-        function startPolling(startedAt) {
+        function formatElapsed(seconds) {
+            const sec = Math.max(0, Number(seconds) || 0);
+            return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${sec % 60}s`;
+        }
+
+        let _reloadScheduled = false;
+        function renderUpdateStatus(s) {
+            if (s.last_db_update) {
+                document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
+            }
+            const elapsed = formatElapsed(s.elapsed_seconds);
+            if (s.active) {
+                const labels = {
+                    queued: '更新已排队，等待后台任务处理',
+                    claimed: '后台任务已领取，正在启动浏览器',
+                    running: '正在抓取期刊数据'
+                };
+                showStatusBar('running', `${labels[s.phase] || s.message || '正在处理更新'}… ${elapsed}`, null);
+                setUpdateBtn(true, elapsed);
+                return true;
+            }
+            setUpdateBtn(false);
+            if (s.phase === 'idle') return false;
+            if (s.phase === 'failed' || s.phase === 'cancelled') {
+                showStatusBar('failure', s.message || '稿件数据更新失败，请稍后重试。', s.last_db_update);
+                return false;
+            }
+            if (s.outcome === 'partial') {
+                showStatusBar('failure',
+                    `更新部分完成：成功 ${s.successful_journals || 0} 个期刊，失败 ${s.failed_journals || 0} 个期刊。`,
+                    s.last_db_update);
+            } else {
+                showStatusBar('success', s.message || '更新已完成。', s.last_db_update);
+            }
+            if ((s.outcome === 'success' || s.outcome === 'partial') && !_reloadScheduled) {
+                _reloadScheduled = true;
+                setTimeout(() => location.reload(), 3000);
+            }
+            return false;
+        }
+
+        function startPolling() {
             if (_pollTimer) clearTimeout(_pollTimer);
-            const t0 = startedAt ? new Date(startedAt).getTime() : Date.now();
-
-            const elapsed = () => {
-                const sec = Math.round((Date.now() - t0) / 1000);
-                return sec < 60 ? `${sec}s` : `${Math.floor(sec/60)}m${sec%60}s`;
-            };
-
             const poll = async () => {
                 try {
                     const resp = await fetch('/api/update/status');
+                    if (!resp.ok) throw new Error();
                     const s = await resp.json();
-
-                    // 更新上次更新时间（即使还在跑也可能有旧数据）
-                    if (s.last_db_update) {
-                        document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
-                    }
-
-                    if (s.running) {
-                        showStatusBar('running', `正在抓取数据... ${elapsed()}`, null);
-                        setUpdateBtn(true, elapsed());
-                        _pollTimer = setTimeout(poll, 3000);
-                        return;
-                    }
-
-                    // 完成
+                    if (renderUpdateStatus(s)) _pollTimer = setTimeout(poll, 3000);
+                } catch (_) {
                     setUpdateBtn(false);
-                    if (s.success) {
-                        showStatusBar('success',
-                            `更新完成，找到 ${s.total_manuscripts} 篇论文`,
-                            s.last_db_update);
-                        // 3 秒后刷新页面以展示最新数据
-                        setTimeout(() => location.reload(), 3000);
-                    } else if (s.finished_at) {
-                        // 已有结果（失败）
-                        showStatusBar('failure',
-                            '更新失败: ' + (s.result_error || s.error || '未知错误'),
-                            s.last_db_update);
-                    }
-                    // 如果 finished_at 为空说明还没跑过，不显示
-                } catch (e) {
-                    setUpdateBtn(false);
-                    showStatusBar('failure', '查询状态失败: ' + e.message, null);
+                    showStatusBar('failure', '无法查询更新状态，请稍后重试。', null);
                 }
             };
             poll();
         }
 
-        // 页面加载时：检查是否有正在进行的更新
+        // 页面加载时恢复当前更新状态
         (async () => {
             try {
                 const resp = await fetch('/api/update/status');
+                if (!resp.ok) return;
                 const s = await resp.json();
-                if (s.last_db_update) {
-                    document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
-                }
-                if (s.running) {
-                    showStatusBar('running', '正在抓取数据...', null);
-                    setUpdateBtn(true);
-                    startPolling(s.started_at);
-                }
+                if (renderUpdateStatus(s)) startPolling();
             } catch (_) {}
         })();
 
@@ -977,20 +978,18 @@
         async function manualUpdate() {
             try {
                 const startResp = await fetch('/api/update', { method: 'POST' });
-                const startResult = await startResp.json();
-
-                if (startResult.status === 'already_running') {
-                    showStatusBar('running', '更新已在进行中，请稍候...', null);
-                    startPolling(null);
+                let startResult = {};
+                try { startResult = await startResp.json(); } catch (_) {}
+                if (!startResp.ok) {
+                    showStatusBar('failure', startResult.message || '无法启动更新，请稍后重试。', null);
+                    setUpdateBtn(false);
                     return;
                 }
-
-                showStatusBar('running', '正在启动...', null);
-                setUpdateBtn(true);
-                startPolling(new Date().toISOString());
-
-            } catch (error) {
-                showStatusBar('failure', '启动更新失败: ' + error.message, null);
+                renderUpdateStatus(startResult);
+                startPolling();
+            } catch (_) {
+                setUpdateBtn(false);
+                showStatusBar('failure', '无法启动更新，请稍后重试。', null);
             }
         }
 

@@ -41,12 +41,14 @@ services:
       WEB_CONCURRENCY: "1"
       MANUSCRIPT_DESK_DB_PATH: /runtime/manuscripts.db
       MANUSCRIPT_DESK_SECRET_ROOT: /run/manuscript-desk-secrets/data
+      MANUSCRIPT_DESK_CHROMIUM: /usr/bin/chromium
       MANUSCRIPT_DESK_CHROMEDRIVER: /usr/bin/chromedriver
       MANUSCRIPT_DESK_OTP_KEY_FILE: /run/manuscript-desk-keys/otp.key
       MANUSCRIPT_DESK_RATE_LIMIT_KEY_FILE: /run/manuscript-desk-keys/rate.key
       MANUSCRIPT_DESK_CAPTCHA_KEY_FILE: /run/manuscript-desk-keys/captcha.key
       MANUSCRIPT_DESK_INITIAL_ADMIN_PASSWORD_FILE: /run/manuscript-desk-bootstrap/initial-admin-password
-      HOME: /home/manuscript-desk
+      HOME: /tmp/manuscript-desk-home
+      XDG_CONFIG_HOME: /tmp/manuscript-desk-config
       XDG_CACHE_HOME: /tmp/manuscript-desk-cache
     volumes:
       - ./data/runtime:/runtime

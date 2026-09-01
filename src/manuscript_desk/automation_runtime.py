@@ -145,7 +145,7 @@ class AutomationRuntime:
                         claim_token=claimed["claim_token"],
                     )
                 else:
-                    self.repository.fail_run_request(owner, claimed["id"], {"error": type(exc).__name__})
+                    self.repository.fail_run_request(owner, claimed["id"], {"error": "automation_failed"})
 
     def _run_update(self, owner: int, claimed: dict, run_id: int) -> dict:
         payload = claimed.get("payload") or {"update_scope": "all"}

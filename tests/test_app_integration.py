@@ -648,19 +648,80 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
 
 def test_manual_update_enqueue_and_status(tmp_path):
     repo, _, _, app = build(tmp_path)
-    add_user(repo, "alice@example.test")
+    owner = add_user(repo, "alice@example.test")
+    repo.create_journal_config(
+        owner,
+        {
+            "journal_name": "Journal",
+            "journal_url": "https://example.test",
+            "username": "alice",
+            "provider": "scholarone",
+        },
+    )
     client = TestClient(app)
     html_login(client, "alice@example.test")
     csrf = session_csrf(client)
     first = client.post("/api/update", headers={"X-CSRF-Token": csrf}).json()
-    assert first["status"] == "queued"
-    assert first["request"]["status"] == "queued"
+    assert first["phase"] == "queued" and first["active"] is True
     # A second enqueue while one is queued attaches to the active request.
     second = client.post("/api/update", headers={"X-CSRF-Token": csrf}).json()
-    assert second["status"] == "already_active"
+    assert second["created"] is False
     assert second["request_id"] == first["request_id"]
     status = client.get("/api/update/status").json()
-    assert status["running"] is True and status["status"] == "queued"
+    assert status["active"] is True and status["phase"] == "queued"
+
+
+def test_manual_update_without_enabled_journal_is_controlled(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    add_user(repo, "alice@example.test")
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+    response = client.post("/api/update", headers={"X-CSRF-Token": session_csrf(client)})
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "no_enabled_journals"
+    with repo.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM automation_run_requests").fetchone()[0] == 0
+
+
+def test_manual_update_terminal_status_is_flat_and_sanitized(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    owner = add_user(repo, "alice@example.test")
+    repo.create_journal_config(
+        owner,
+        {
+            "journal_name": "Journal",
+            "journal_url": "https://example.test",
+            "username": "alice",
+            "provider": "scholarone",
+        },
+    )
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+    csrf = session_csrf(client)
+    started = client.post("/api/update", headers={"X-CSRF-Token": csrf}).json()
+    claimed = repo.claim_next_run(owner, "test-worker")
+    run_id = repo.start_claimed_run(owner, claimed["id"], "test-worker")
+    repo.finish_run(
+        owner,
+        run_id,
+        "failed",
+        {
+            "result": "failed",
+            "error": "browser_start_failed",
+            "attempted_journals": 1,
+            "successful_journals": 0,
+            "failed_journals": 1,
+        },
+    )
+
+    status = client.get("/api/update/status").json()
+
+    assert status["request_id"] == started["request_id"]
+    assert status["active"] is False and status["phase"] == "failed"
+    assert status["outcome"] == "failed" and status["error_code"] == "browser_start_failed"
+    assert "自动化浏览器无法启动" in status["message"]
+    rendered = str(status)
+    assert "SessionNotCreatedException" not in rendered and "chromedriver" not in rendered.casefold()
 
 
 def test_admin_invitation_html_is_idempotent_and_token_free(tmp_path):

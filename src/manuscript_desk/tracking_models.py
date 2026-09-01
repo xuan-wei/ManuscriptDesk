@@ -38,6 +38,7 @@ class JournalTrackResult:
     journal_config_id: int | None
     success: bool
     manuscripts: list[dict] = field(default_factory=list)
+    error_code: str = ""
     error_message: str = ""
     elapsed_seconds: float = 0.0
 
@@ -53,6 +54,7 @@ class JournalTrackResult:
             "success": self.success,
             "manuscripts": self.manuscripts,
             "manuscripts_found": self.manuscripts_found,
+            "error_code": self.error_code,
             "error_message": self.error_message,
             "elapsed_seconds": self.elapsed_seconds,
         }

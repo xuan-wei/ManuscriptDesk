@@ -45,6 +45,13 @@ def test_initializer_creates_external_private_deployment(tmp_path):
     assert "10001:10001" in compose_text
     assert "./data/runtime:/runtime" in compose_text
     assert "./backups:/managed-backups" in compose_text
+    assert "MANUSCRIPT_DESK_CHROMIUM: /usr/bin/chromium" in compose_text
+    assert "MANUSCRIPT_DESK_CHROMEDRIVER: /usr/bin/chromedriver" in compose_text
+    assert "HOME: /tmp/manuscript-desk-home" in compose_text
+    assert "XDG_CONFIG_HOME: /tmp/manuscript-desk-config" in compose_text
+    assert 'cap_drop: ["ALL"]' in compose_text
+    assert 'security_opt: ["no-new-privileges:true"]' in compose_text
+    assert "privileged:" not in compose_text
     assert "../state" not in compose_text
     assert "../backups" not in compose_text
     assert "Initial password:" in bootstrap.read_text()

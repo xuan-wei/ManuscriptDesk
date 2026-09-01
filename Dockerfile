@@ -11,8 +11,11 @@ FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HOME=/home/manuscript-desk \
+    HOME=/tmp/manuscript-desk-home \
+    XDG_CONFIG_HOME=/tmp/manuscript-desk-config \
     XDG_CACHE_HOME=/tmp/manuscript-desk-cache \
+    MANUSCRIPT_DESK_CHROMIUM=/usr/bin/chromium \
+    MANUSCRIPT_DESK_CHROMEDRIVER=/usr/bin/chromedriver \
     WEB_CONCURRENCY=1
 
 RUN apt-get update \

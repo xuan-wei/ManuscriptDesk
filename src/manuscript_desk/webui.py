@@ -84,6 +84,103 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_UPDATE_MESSAGES = {
+    "no_enabled_journals": "尚未启用期刊配置，请先在期刊配置页面添加或启用期刊。",
+    "browser_start_failed": "自动化浏览器无法启动，请联系管理员检查运行环境。",
+    "browser_timeout": "期刊页面响应超时，请稍后重试。",
+    "credentials_unavailable": "该期刊的登录凭据不可用，请检查期刊配置。",
+    "provider_login_failed": "无法登录期刊系统，请检查账号、密码或期刊登录状态。",
+    "provider_unavailable": "期刊系统当前不可用，请稍后重试。",
+    "unsafe_provider_redirect": "期刊页面跳转到了不受信任的地址，本次更新已停止。",
+    "empty_result_anomaly": "期刊返回了异常的空结果，原有稿件数据已保留。",
+    "tracking_failed": "期刊数据更新失败，请稍后重试或联系管理员。",
+    "automation_failed": "后台更新任务失败，请稍后重试或联系管理员。",
+}
+
+
+def _parse_utc(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _update_status_view(request_item: dict | None, last_db_update: str | None = None) -> dict:
+    now = datetime.now(timezone.utc)
+    if not request_item:
+        return {
+            "active": False,
+            "phase": "idle",
+            "outcome": None,
+            "request_id": None,
+            "started_at": None,
+            "finished_at": None,
+            "server_time": now.isoformat(),
+            "elapsed_seconds": 0,
+            "total_manuscripts": 0,
+            "attempted_journals": 0,
+            "successful_journals": 0,
+            "failed_journals": 0,
+            "error_code": None,
+            "message": "",
+            "last_db_update": last_db_update,
+        }
+    status = str(request_item.get("status") or "")
+    summary = request_item.get("summary") or {}
+    result = str(request_item.get("result") or summary.get("result") or "") or None
+    active = status in {"queued", "claimed", "running"}
+    phase = status if active or status in {"failed", "cancelled"} else "finished"
+    if status == "finished" and result == "failed":
+        phase = "failed"
+    error_code = str(summary.get("error") or "").strip() or None
+    if error_code not in _UPDATE_MESSAGES:
+        error_code = "tracking_failed" if phase == "failed" else None
+    started = _parse_utc(request_item.get("started_at"))
+    finished = _parse_utc(request_item.get("finished_at"))
+    base = started or _parse_utc(request_item.get("updated_at")) or _parse_utc(request_item.get("created_at"))
+    end = finished or now
+    elapsed = max(0, int((end - base).total_seconds())) if base else 0
+    if phase == "queued":
+        message = "更新已排队，等待后台任务处理。"
+    elif phase == "claimed":
+        message = "后台任务已领取，正在启动浏览器。"
+    elif phase == "running":
+        message = "正在抓取期刊数据。"
+    elif phase == "cancelled":
+        message = "更新已取消。"
+    elif phase == "failed":
+        message = _UPDATE_MESSAGES.get(error_code, _UPDATE_MESSAGES["tracking_failed"])
+    elif result == "success":
+        message = f"更新完成，找到 {int(summary.get('total_manuscripts') or 0)} 篇稿件。"
+    elif result == "partial":
+        message = "更新部分完成。"
+    elif result == "no_changes":
+        message = "更新完成，未发现新的稿件数据。"
+    else:
+        message = "更新已结束。"
+    return {
+        "active": active,
+        "phase": phase,
+        "outcome": result,
+        "request_id": request_item.get("id"),
+        "started_at": request_item.get("started_at"),
+        "finished_at": request_item.get("finished_at"),
+        "server_time": now.isoformat(),
+        "elapsed_seconds": elapsed,
+        "total_manuscripts": int(summary.get("total_manuscripts") or 0),
+        "attempted_journals": int(summary.get("attempted_journals") or 0),
+        "successful_journals": int(summary.get("successful_journals") or 0),
+        "failed_journals": int(summary.get("failed_journals") or 0),
+        "error_code": error_code,
+        "message": message,
+        "last_db_update": last_db_update,
+    }
+
+
 def _time_ago(value: str | None) -> str:
     """Format a stored manuscript date like the legacy mobile Shortcut view."""
     if not value:
@@ -1780,15 +1877,23 @@ def install_ui(
         if error:
             return error
         owner = session["user_id"]
+        if not repository.list_journal_configs(owner, enabled_only=True):
+            return JSONResponse(
+                {
+                    "active": False,
+                    "phase": "failed",
+                    "outcome": "failed",
+                    "error_code": "no_enabled_journals",
+                    "message": _UPDATE_MESSAGES["no_enabled_journals"],
+                },
+                status_code=409,
+            )
         scheduled_for = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         enqueue = repository.enqueue_run(owner, "update", scheduled_for, source="manual", requested_by_user_id=owner)
-        item = enqueue["request"]
-        return {
-            "message": "更新已加入队列" if enqueue["created"] else "更新已在进行中",
-            "status": "queued" if enqueue["created"] else "already_active",
-            "request_id": item["id"],
-            "request": repository.get_run_request(owner, item["id"]),
-        }
+        item = repository.get_run_request(owner, enqueue["request"]["id"])
+        response = _update_status_view(item)
+        response["created"] = enqueue["created"]
+        return JSONResponse(response, status_code=202 if enqueue["created"] else 200)
 
     @app.get("/api/update/status")
     async def api_update_status(request: Request):
@@ -1806,13 +1911,7 @@ def install_ui(
                 "SELECT MAX(recorded_at) FROM manuscript_records WHERE owner_user_id=?", (owner,)
             ).fetchone()[0]
         latest = repository.get_run_request(owner, row["id"]) if row else None
-        return {
-            "running": active is not None,
-            "status": active["status"] if active else (latest["status"] if latest else None),
-            "request": active or latest,
-            "last_run_scheduled_for": latest["scheduled_for"] if latest else None,
-            "last_db_update": last_update,
-        }
+        return _update_status_view(active or latest, last_update)
 
     @app.get("/api/scheduler/status")
     async def api_scheduler_status(request: Request):

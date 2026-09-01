@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
+from .browser_factory import BrowserLaunchError
 from .credentials import resolve_tenant_credentials
 from .repository import Repository
 from .secrets_store import SecretStore
@@ -52,6 +53,21 @@ def _safe_config(config: Mapping) -> dict:
     }
 
 
+def _tracking_error_code(exc: Exception) -> str:
+    if isinstance(exc, BrowserLaunchError):
+        return "browser_start_failed"
+    code = str(getattr(exc, "error_code", "") or exc).strip().casefold()
+    allowed = {
+        "browser_timeout",
+        "credentials_unavailable",
+        "empty_result_anomaly",
+        "provider_login_failed",
+        "provider_unavailable",
+        "unsafe_provider_redirect",
+    }
+    return code if code in allowed else "tracking_failed"
+
+
 class TrackingService:
     """Orchestrates provider scrapers while keeping credentials and writes tenant-bound."""
 
@@ -85,15 +101,20 @@ class TrackingService:
                 elapsed_seconds=time.monotonic() - started,
             ).to_dict()
         except Exception as exc:
+            error_code = _tracking_error_code(exc)
             logger.error(
-                "tenant %s journal %s tracking failed: %s", context.owner_user_id, safe.get("id"), type(exc).__name__
+                "tenant %s journal %s tracking failed: type=%s code=%s",
+                context.owner_user_id,
+                safe.get("id"),
+                type(exc).__name__,
+                error_code,
             )
             return JournalTrackResult(
                 safe.get("journal_name") or "",
                 provider,
                 safe.get("id"),
                 False,
-                error_message=str(exc)[:300],
+                error_code=error_code,
                 elapsed_seconds=time.monotonic() - started,
             ).to_dict()
         finally:
@@ -138,7 +159,7 @@ class TrackingService:
             return {
                 "success": False,
                 "result": "failed",
-                "error": "没有启用的期刊配置",
+                "error": "no_enabled_journals",
                 "total_manuscripts": 0,
                 "attempted_journals": 0,
                 "successful_journals": 0,
@@ -170,7 +191,7 @@ class TrackingService:
         return {
             "success": successful > 0,
             "result": outcome,
-            "error": "; ".join(r.get("error_message", "") for r in results if not r.get("success")) or None,
+            "error": next((r.get("error_code") for r in results if not r.get("success")), None),
             "total_manuscripts": total_manuscripts,
             "attempted_journals": attempted,
             "successful_journals": successful,
