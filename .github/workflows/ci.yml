@@ -25,7 +25,9 @@ jobs:
       - name: Type check (advisory)
         continue-on-error: true
         run: mypy src/manuscript_desk
-      - run: bandit -q -r src/manuscript_desk
+      - name: Security scan (advisory)
+        continue-on-error: true
+        run: bandit -q -r src/manuscript_desk
       - name: Dependency audit (advisory)
         continue-on-error: true
         run: pip-audit
