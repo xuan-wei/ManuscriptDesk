@@ -1,7 +1,6 @@
 const csrf = document.querySelector('meta[name="automation-csrf"]').content;
 const $ = selector => document.querySelector(selector);
 let jobs = [];
-let runSummaries = [];
 let refreshTimer = null;
 let loading = false;
 let smtpState = null;
@@ -83,6 +82,30 @@ function jobCard(job) {
   </article>`;
 }
 
+function summaryText(run) {
+  const summary = run.summary || {};
+  if (summary.message_code === 'historical_summary_unavailable') return '历史记录仅保留通用结果';
+  if (run.kind === 'email') {
+    if (summary.result === 'no_changes') return '没有需要发送的新变化';
+    if (summary.result === 'success') return `已发送 ${Number(summary.item_count || 0)} 项，${Number(summary.new_status_count || 0)} 项为新状态`;
+    return summary.error_code ? '邮件任务失败，请检查发送通道' : '邮件任务已结束';
+  }
+  const attempted = Number(summary.attempted_journals || 0);
+  const successful = Number(summary.successful_journals || 0);
+  const failed = Number(summary.failed_journals || 0);
+  if (summary.reason === 'no_enabled_starred_journals') return '标星稿件所在期刊未启用';
+  if (summary.reason === 'no_enabled_working_journals') return '进行中稿件所在期刊未启用';
+  if (summary.result === 'success') return `更新完成：${successful}/${attempted} 个期刊成功`;
+  if (summary.result === 'partial') return `部分完成：${successful}/${attempted} 个期刊成功，${failed} 个失败`;
+  if (summary.result === 'no_changes') return attempted ? `已检查 ${attempted} 个期刊，没有发现变化` : '没有发现变化';
+  const failures = Array.isArray(summary.failures) ? summary.failures : [];
+  if (failures.length) {
+    const journals = failures.map(item => item.journal_name).filter(Boolean);
+    return journals.length ? `更新失败：${journals.join('、')}` : `更新失败（${failures.length} 项）`;
+  }
+  return summary.error_code ? '更新失败，请稍后重试' : '更新任务已结束';
+}
+
 function terminalMessage(request, kind) {
   if (request.result === 'partial') return '部分期刊更新成功，请查看运行详情';
   if (request.result === 'no_changes') return kind === 'email' ? '没有需要发送的新变化' : '没有发现变化';
@@ -162,17 +185,11 @@ async function load() {
     $('#update-jobs').innerHTML = updates.length ? updates.map(jobCard).join('') : '尚无更新任务';
     $('#email-jobs').innerHTML = emails.length ? emails.map(jobCard).join('') : '尚无邮件任务';
     renderSmtpState(smtp);
-    runSummaries = runs.runs.map(run => String(run.summary_json ?? ''));
-    $('#run-history').innerHTML = runs.runs.length ? runs.runs.map((run, index) => {
-      const summary = runSummaries[index];
-      const limit = 80;
-      const short = summary.length > limit ? `${summary.slice(0, limit).trimEnd()}…` : summary;
-      const detail = summary.length > limit
-        ? ` <button class="run-summary-link" type="button" data-run-summary="${index}">查看详情</button>`
-        : '';
+    $('#run-history').innerHTML = runs.runs.length ? runs.runs.map(run => {
+      const summary = summaryText(run);
       const label = resultLabels[run.status] || phaseLabels[run.status] || run.status;
       const statusClass = run.status === 'success' ? 'success' : run.status === 'failed' ? 'failed' : run.status === 'partial' ? 'active' : '';
-      return `<tr><td class="run-task">${esc(run.job_name)}</td><td>${esc(run.kind === 'email' ? '邮件' : '更新')}</td><td class="run-start">${esc(run.started_at)}</td><td><span class="badge ${statusClass}">${esc(label)}</span></td><td class="run-summary"><span>${esc(short)}</span>${detail}</td></tr>`;
+      return `<tr><td class="run-task">${esc(run.job_name)}</td><td>${esc(run.kind === 'email' ? '邮件' : '更新')}</td><td class="run-start">${esc(run.started_at)}</td><td><span class="badge ${statusClass}">${esc(label)}</span></td><td class="run-summary"><span>${esc(summary)}</span></td></tr>`;
     }).join('') : '<tr><td colspan="5">暂无记录</td></tr>';
     for (const job of activeJobs) watchRequest(job.active_request.id, job.kind);
     scheduleRefresh(activeJobs.length > 0);
@@ -209,12 +226,6 @@ function openJob(kind, job = null) {
 }
 
 document.addEventListener('click', async event => {
-  const summaryButton = event.target.closest('[data-run-summary]');
-  if (summaryButton) {
-    $('#run-summary-detail').textContent = runSummaries[Number(summaryButton.dataset.runSummary)] ?? '';
-    $('#run-summary-dialog').showModal();
-    return;
-  }
   const close = event.target.closest('[data-close-dialog]');
   if (close) {
     document.getElementById(close.dataset.closeDialog)?.close();

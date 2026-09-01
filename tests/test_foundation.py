@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -172,7 +173,92 @@ def test_schema_v8_migrates_smtp_sources_and_health(tmp_path):
         "last_tested_at",
         "last_test_error_code",
     } <= smtp_columns
-    assert marker == "v8-to-v9-smtp-sources"
+    assert marker == "v9-to-v10-compact-run-history"
+
+
+def test_schema_v9_migrates_urls_and_compacts_run_history(tmp_path):
+    path = tmp_path / "v9.db"
+    create_database(path)
+    with connect(path) as conn:
+        owner = conn.execute(
+            """INSERT INTO users(email,username,display_name,password_hash,password_scheme,email_verified_at)
+               VALUES('old@example.test','old','Old','hash','legacy_sha256',CURRENT_TIMESTAMP)"""
+        ).lastrowid
+        credential_ref = "users/old/credentials/keep"
+        config_id = conn.execute(
+            """INSERT INTO journal_configs
+               (owner_user_id,journal_name,journal_url,username,provider,site_key,credential_ref)
+               VALUES(?,?,?,?,?,?,?)""",
+            (
+                owner,
+                "Owned Journal",
+                "http://MC.ManuscriptCentral.com/Journal/Login?x=1",
+                "old",
+                "scholarone",
+                "legacy:key",
+                credential_ref,
+            ),
+        ).lastrowid
+        untouched_id = conn.execute(
+            """INSERT INTO journal_configs
+               (owner_user_id,journal_name,journal_url,username,provider,site_key,credential_ref)
+               VALUES(?,?,?,?,?,?,?)""",
+            (owner, "Unsafe", "http://evil.test/path", "old", "scholarone", "unsafe:key", credential_ref),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO automation_job_runs(owner_user_id,status,summary_json,finished_at)
+               VALUES(?,'partial',?,CURRENT_TIMESTAMP)""",
+            (
+                owner,
+                json.dumps(
+                    {
+                        "result": "partial",
+                        "total_manuscripts": 3,
+                        "results": {"Owned Journal": [{"title": "SECRET", "original_id": "M-1"}]},
+                        "journal_results": [
+                            {
+                                "journal_config_id": config_id,
+                                "journal_name": "INJECTED",
+                                "success": False,
+                                "error_code": "provider_login_failed",
+                                "error": "raw exception and stack",
+                            }
+                        ],
+                        "unknown_secret": "https://private.example.test/address",
+                    }
+                ),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO automation_job_runs(owner_user_id,status,summary_json) VALUES(?,'failed','not-json')",
+            (owner,),
+        )
+        conn.execute("UPDATE app_schema SET version=9,application_compatibility='manuscript-desk-multitenant-v9'")
+        conn.commit()
+
+    migrate_database(path)
+
+    with connect(path) as conn:
+        assert_schema(conn)
+        canonical = dict(conn.execute("SELECT * FROM journal_configs WHERE id=?", (config_id,)).fetchone())
+        untouched = dict(conn.execute("SELECT * FROM journal_configs WHERE id=?", (untouched_id,)).fetchone())
+        summaries = [json.loads(row[0]) for row in conn.execute("SELECT summary_json FROM automation_job_runs ORDER BY id")]
+        marker = conn.execute("SELECT migration_id FROM app_schema WHERE singleton=1").fetchone()[0]
+    assert canonical["id"] == config_id
+    assert canonical["journal_url"] == "https://mc.manuscriptcentral.com/Journal/Login?x=1"
+    assert canonical["site_key"] == "mc.manuscriptcentral.com:journal"
+    assert canonical["credential_ref"] == credential_ref
+    assert untouched["journal_url"] == "http://evil.test/path" and untouched["site_key"] == "unsafe:key"
+    assert summaries[0] == {
+        "failures": [{"code": "provider_login_failed", "journal_name": "Owned Journal"}],
+        "historical": True,
+        "result": "partial",
+        "summary_version": 1,
+        "total_manuscripts": 3,
+    }
+    assert summaries[1]["message_code"] == "historical_summary_unavailable"
+    assert "SECRET" not in json.dumps(summaries) and "private.example" not in json.dumps(summaries)
+    assert marker == "v9-to-v10-compact-run-history"
 
 
 def test_shortcut_settings_are_owner_scoped(tmp_path):

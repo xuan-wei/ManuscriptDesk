@@ -4,6 +4,7 @@ from manuscript_desk.provider_origins import (
     ProviderValidationError,
     SafeProviderNavigation,
     UnsafeNavigationError,
+    canonicalize_legacy_scholarone_url,
     get_provider_origin,
     normalize_provider_url,
 )
@@ -44,6 +45,28 @@ def test_site_key_is_derived_from_normalized_url():
     assert origin.derive_site_key("https://MC.manuscriptcentral.com/JOURNAL/login") == (
         "mc.manuscriptcentral.com:journal"
     )
+
+
+def test_legacy_scholarone_http_is_upgraded_without_changing_site_key():
+    origin = get_provider_origin("scholarone")
+    legacy = "http://MC.ManuscriptCentral.com/JOURNAL/login?next=author"
+    canonical = canonicalize_legacy_scholarone_url(legacy)
+    assert canonical == "https://mc.manuscriptcentral.com/JOURNAL/login?next=author"
+    assert origin.derive_site_key(canonical) == "mc.manuscriptcentral.com:journal"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://evil.test/JOURNAL",
+        "http://user:password@mc.manuscriptcentral.com/JOURNAL",
+        "http://mc.manuscriptcentral.com:8080/JOURNAL",
+        "javascript:alert(1)",
+    ],
+)
+def test_legacy_scholarone_canonicalizer_rejects_unsafe_input(value):
+    with pytest.raises(ProviderValidationError):
+        canonicalize_legacy_scholarone_url(value)
 
 
 class RedirectingDriver:

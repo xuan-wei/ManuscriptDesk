@@ -857,7 +857,32 @@
         // ===== 更新状态条工具函数 =====
 
         let _pollTimer = null;
+        let _pollController = null;
+        let _pollGeneration = 0;
+        let _reloadTimer = null;
+        let _reloadRequestId = null;
+        let _watchedRequestId = null;
+        let _statusRequestId = null;
+        const _reloadedRequestKey = 'manuscriptDesk.update.reloadedRequestId';
+        const _dismissedRequestPrefix = 'manuscriptDesk.update.dismissed.';
         const _btnOriginalHTML = '<i class="fas fa-sync-alt"></i> 手动更新';
+
+        function sessionGet(key) {
+            try { return sessionStorage.getItem(key); } catch (_) { return null; }
+        }
+
+        function sessionSet(key, value) {
+            try { sessionStorage.setItem(key, value); } catch (_) {}
+        }
+
+        function requestKey(requestId) {
+            return requestId == null ? null : String(requestId);
+        }
+
+        function isStatusDismissed(requestId) {
+            const key = requestKey(requestId);
+            return key !== null && sessionGet(`${_dismissedRequestPrefix}${key}`) === '1';
+        }
 
         function fmtLastUpdate(utcStr) {
             if (!utcStr) return '';
@@ -870,10 +895,12 @@
             return `${Math.floor(diff/86400)} 天前更新`;
         }
 
-        function showStatusBar(type, text, lastUpdate) {
+        function showStatusBar(type, text, lastUpdate, requestId) {
+            _statusRequestId = requestKey(requestId);
             const bar = document.getElementById('updateStatusBar');
             const icon = document.getElementById('updateStatusIcon');
             const textEl = document.getElementById('updateStatusText');
+            bar.style.display = '';
             bar.className = type;
             if (type === 'running') {
                 icon.innerHTML = '<span class="spinner-border" role="status"></span>';
@@ -891,6 +918,7 @@
         }
 
         function dismissStatusBar() {
+            if (_statusRequestId !== null) sessionSet(`${_dismissedRequestPrefix}${_statusRequestId}`, '1');
             document.getElementById('updateStatusBar').className = '';
             document.getElementById('updateStatusBar').style.display = 'none';
         }
@@ -912,84 +940,144 @@
             return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${sec % 60}s`;
         }
 
-        let _reloadScheduled = false;
+        function stopPolling() {
+            _pollGeneration += 1;
+            if (_pollTimer) clearTimeout(_pollTimer);
+            _pollTimer = null;
+            if (_pollController) _pollController.abort();
+            _pollController = null;
+        }
+
+        function cancelPendingReload() {
+            if (_reloadTimer) clearTimeout(_reloadTimer);
+            _reloadTimer = null;
+            _reloadRequestId = null;
+        }
+
+        function watchActiveRequest(requestId) {
+            const key = requestKey(requestId);
+            if (key === null) return;
+            if (_reloadRequestId !== null && _reloadRequestId !== key) cancelPendingReload();
+            _watchedRequestId = key;
+        }
+
+        function scheduleFinalReload(requestId) {
+            const key = requestKey(requestId);
+            if (key === null || key !== _watchedRequestId) return;
+            if (sessionGet(_reloadedRequestKey) === key || _reloadRequestId === key) return;
+            cancelPendingReload();
+            _reloadRequestId = key;
+            _reloadTimer = setTimeout(() => {
+                sessionSet(_reloadedRequestKey, key);
+                location.reload();
+            }, 3000);
+        }
+
         function renderUpdateStatus(s) {
+            const requestId = requestKey(s.request_id);
             if (s.last_db_update) {
                 document.getElementById('headerLastUpdate').textContent = fmtLastUpdate(s.last_db_update);
             }
             const elapsed = formatElapsed(s.elapsed_seconds);
             if (s.active) {
+                watchActiveRequest(requestId);
                 const labels = {
                     queued: '更新已排队，等待后台任务处理',
                     claimed: '后台任务已领取，正在启动浏览器',
                     running: '正在抓取期刊数据'
                 };
-                showStatusBar('running', `${labels[s.phase] || s.message || '正在处理更新'}… ${elapsed}`, null);
+                if (!isStatusDismissed(requestId)) {
+                    showStatusBar('running', `${labels[s.phase] || s.message || '正在处理更新'}… ${elapsed}`, null, requestId);
+                }
                 setUpdateBtn(true, elapsed);
                 return true;
             }
             setUpdateBtn(false);
             if (s.phase === 'idle') return false;
-            if (s.phase === 'failed' || s.phase === 'cancelled') {
-                showStatusBar('failure', s.message || '稿件数据更新失败，请稍后重试。', s.last_db_update);
-                return false;
+            const watchedTerminal = requestId !== null && requestId === _watchedRequestId;
+            if (!watchedTerminal && _watchedRequestId !== null) {
+                _watchedRequestId = null;
+                cancelPendingReload();
             }
-            if (s.outcome === 'partial') {
-                showStatusBar('failure',
-                    `更新部分完成：成功 ${s.successful_journals || 0} 个期刊，失败 ${s.failed_journals || 0} 个期刊。`,
-                    s.last_db_update);
-            } else {
-                showStatusBar('success', s.message || '更新已完成。', s.last_db_update);
+            if (!isStatusDismissed(requestId)) {
+                if (s.phase === 'failed' || s.phase === 'cancelled') {
+                    showStatusBar('failure', s.message || '稿件数据更新失败，请稍后重试。', s.last_db_update, requestId);
+                } else if (s.outcome === 'partial') {
+                    showStatusBar('failure',
+                        `更新部分完成：成功 ${s.successful_journals || 0} 个期刊，失败 ${s.failed_journals || 0} 个期刊。`,
+                        s.last_db_update, requestId);
+                } else {
+                    showStatusBar('success', s.message || '更新已完成。', s.last_db_update, requestId);
+                }
             }
-            if ((s.outcome === 'success' || s.outcome === 'partial') && !_reloadScheduled) {
-                _reloadScheduled = true;
-                setTimeout(() => location.reload(), 3000);
+            if (watchedTerminal && (s.outcome === 'success' || s.outcome === 'partial')) {
+                scheduleFinalReload(requestId);
             }
+            if (watchedTerminal) _watchedRequestId = null;
             return false;
         }
 
         function startPolling() {
-            if (_pollTimer) clearTimeout(_pollTimer);
+            stopPolling();
+            const generation = _pollGeneration;
             const poll = async () => {
+                if (generation !== _pollGeneration || _watchedRequestId === null) return;
+                const controller = new AbortController();
+                _pollController = controller;
                 try {
-                    const resp = await fetch('/api/update/status');
+                    const resp = await fetch('/api/update/status', { signal: controller.signal });
+                    if (generation !== _pollGeneration) return;
                     if (!resp.ok) throw new Error();
                     const s = await resp.json();
-                    if (renderUpdateStatus(s)) _pollTimer = setTimeout(poll, 3000);
-                } catch (_) {
+                    if (generation !== _pollGeneration) return;
+                    const active = renderUpdateStatus(s);
+                    if (active && generation === _pollGeneration) {
+                        _pollTimer = setTimeout(poll, 3000);
+                    } else {
+                        stopPolling();
+                    }
+                } catch (error) {
+                    if (error.name === 'AbortError' || generation !== _pollGeneration) return;
+                    stopPolling();
                     setUpdateBtn(false);
-                    showStatusBar('failure', '无法查询更新状态，请稍后重试。', null);
+                    showStatusBar('failure', '无法查询更新状态，请稍后重试。', null, _watchedRequestId);
+                } finally {
+                    if (_pollController === controller) _pollController = null;
                 }
             };
             poll();
         }
 
-        // 页面加载时恢复当前更新状态
+        // 页面加载时只恢复活动请求；旧的终态结果不会触发刷新。
         (async () => {
+            const generation = _pollGeneration;
             try {
                 const resp = await fetch('/api/update/status');
-                if (!resp.ok) return;
+                if (generation !== _pollGeneration || !resp.ok) return;
                 const s = await resp.json();
+                if (generation !== _pollGeneration) return;
                 if (renderUpdateStatus(s)) startPolling();
             } catch (_) {}
         })();
 
         // 手动更新入口
         async function manualUpdate() {
+            setUpdateBtn(true);
+            stopPolling();
             try {
                 const startResp = await fetch('/api/update', { method: 'POST' });
                 let startResult = {};
                 try { startResult = await startResp.json(); } catch (_) {}
                 if (!startResp.ok) {
-                    showStatusBar('failure', startResult.message || '无法启动更新，请稍后重试。', null);
+                    showStatusBar('failure', startResult.message || '无法启动更新，请稍后重试。', null, startResult.request_id);
                     setUpdateBtn(false);
                     return;
                 }
-                renderUpdateStatus(startResult);
-                startPolling();
+                watchActiveRequest(startResult.request_id);
+                if (renderUpdateStatus(startResult)) startPolling();
             } catch (_) {
                 setUpdateBtn(false);
-                showStatusBar('failure', '无法启动更新，请稍后重试。', null);
+                showStatusBar('failure', '无法启动更新，请稍后重试。', null, null);
             }
         }
 

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,6 +9,7 @@ from manuscript_desk.repository import Repository
 from manuscript_desk.schema import create_database
 from manuscript_desk.secrets_store import SecretStore
 from manuscript_desk.security import hash_password
+from manuscript_desk.tracking_models import BrowserTabCrashedError, ProviderLoginError
 from manuscript_desk.tracking_service import TenantRunContext, TrackingService
 
 
@@ -63,6 +65,75 @@ def test_tracking_colliding_ids_stays_tenant_scoped(tmp_path):
     service.track_journals(TenantRunContext(bob, bob))
     assert [r["title"] for r in repo.latest_manuscripts(alice)] == ["Alice Journal"]
     assert [r["title"] for r in repo.latest_manuscripts(bob)] == ["Bob Journal"]
+
+
+def test_tracking_retries_browser_crash_once_with_fresh_tracker(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config(repo, secrets, alice, "Crash Journal")
+    trackers = []
+
+    class CrashThenSucceed:
+        def __init__(self, should_crash):
+            self.should_crash = should_crash
+            self.closed = False
+
+        def fetch(self, cfg, credentials):
+            if self.should_crash:
+                raise BrowserTabCrashedError()
+            return [{"original_id": "OK", "manuscript_id": "OK", "title": cfg["journal_name"]}]
+
+        def close(self):
+            self.closed = True
+
+    def factory(_provider, _headless):
+        tracker = CrashThenSucceed(not trackers)
+        trackers.append(tracker)
+        return tracker
+
+    summary = TrackingService(repo, secrets, provider_factory=factory).track_journals(TenantRunContext(alice, alice))
+
+    assert summary["result"] == "success"
+    assert len(trackers) == 2 and all(tracker.closed for tracker in trackers)
+    assert [row["original_id"] for row in repo.latest_manuscripts(alice)] == ["OK"]
+
+
+def test_tracking_does_not_retry_auth_failure_or_persist_payload(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config_id = config(repo, secrets, alice, "Auth Journal")
+    repo.save_manuscript(
+        alice,
+        config_id,
+        {"original_id": "OLD", "manuscript_id": "OLD", "title": "Existing", "status": "Under Review"},
+    )
+    created = []
+
+    class AuthFailure:
+        def fetch(self, _cfg, _credentials):
+            raise ProviderLoginError()
+
+        def close(self):
+            pass
+
+    def factory(_provider, _headless):
+        created.append(1)
+        return AuthFailure()
+
+    summary = TrackingService(repo, secrets, provider_factory=factory).track_journals(TenantRunContext(alice, alice))
+
+    assert summary["error"] == "provider_login_failed"
+    assert len(created) == 1
+    assert [row["original_id"] for row in repo.latest_manuscripts(alice)] == ["OLD"]
+    assert summary["journal_results"][0]["manuscripts"] == []
+    assert summary["journal_results"][0]["error_message"] == ""
+
+
+def test_tracking_worker_default_is_two_and_configuration_is_bounded(monkeypatch, tmp_path):
+    repo, secrets, _, _ = setup(tmp_path)
+    monkeypatch.delenv("MANUSCRIPT_DESK_MAX_BROWSER_WORKERS", raising=False)
+    assert TrackingService(repo, secrets).max_workers == 2
+    monkeypatch.setenv("MANUSCRIPT_DESK_MAX_BROWSER_WORKERS", "99")
+    assert TrackingService(repo, secrets).max_workers == 8
+    assert TrackingService(repo, secrets, max_workers=0).max_workers == 1
 
 
 class RecordingProvider:
@@ -349,6 +420,61 @@ def test_run_request_status_is_tenant_scoped(tmp_path):
     finished = repo.get_run_request(alice, claimed["id"])
     assert finished["status"] == "finished" and finished["result"] == "partial"
     assert finished["summary"]["failed_journals"] == 1
+
+
+def test_run_summary_is_compact_on_write_and_read(tmp_path):
+    repo, _, alice, bob = setup(tmp_path)
+    own = config(repo, SecretStore(tmp_path / "extra-secrets"), alice, "Alice Journal")
+    foreign = config(repo, SecretStore(tmp_path / "foreign-secrets"), bob, "Bob Journal")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    request = repo.enqueue_run(alice, "update", now.isoformat(), requested_by_user_id=alice)["request"]
+    claimed = repo.claim_next_run(alice, "worker", now=now)
+    run_id = repo.start_claimed_run(alice, claimed["id"], "worker")
+
+    assert repo.finish_run(
+        alice,
+        run_id,
+        "partial",
+        {
+            "result": "partial",
+            "attempted_journals": 9,
+            "successful_journals": 2,
+            "failed_journals": 7,
+            "results": {"Alice Journal": [{"title": "Secret title", "original_id": "SECRET-ID"}]},
+            "journal_results": [
+                {"journal_config_id": own, "success": False, "error_code": "provider_login_failed"},
+                {"journal_config_id": foreign, "success": False, "error_code": "raw traceback"},
+                {"journal_config_id": own, "success": False, "error_code": "provider_unavailable"},
+                {"journal_config_id": own, "success": False, "error_code": "browser_timeout"},
+                {"journal_config_id": own, "success": False, "error_code": "unsafe_provider_redirect"},
+                {"journal_config_id": own, "success": False, "error_code": "credentials_unavailable"},
+            ],
+            "url": "https://private.example.test",
+            "stack": "Traceback: password=secret",
+        },
+    )
+
+    item = repo.get_run_request(alice, request["id"])
+    summary = item["summary"]
+    assert set(summary) == {
+        "summary_version",
+        "result",
+        "kind",
+        "attempted_journals",
+        "successful_journals",
+        "failed_journals",
+        "failures",
+        "historical",
+    }
+    assert len(summary["failures"]) == 5
+    assert summary["failures"][0] == {"code": "provider_login_failed", "journal_name": "Alice Journal"}
+    assert "journal_name" not in summary["failures"][1]
+    rendered = json.dumps(summary)
+    assert "Secret title" not in rendered and "SECRET-ID" not in rendered
+    assert "private.example" not in rendered and "Traceback" not in rendered and "raw traceback" not in rendered
+    with repo.connection() as conn:
+        stored = conn.execute("SELECT summary_json FROM automation_job_runs WHERE id=?", (run_id,)).fetchone()[0]
+    assert "Secret title" not in stored and "private.example" not in stored
 
 
 def test_smtp_source_and_system_health_are_safe_and_owner_scoped(tmp_path):

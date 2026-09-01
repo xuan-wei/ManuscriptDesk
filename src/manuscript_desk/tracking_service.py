@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,7 +9,13 @@ from .browser_factory import BrowserLaunchError
 from .credentials import resolve_tenant_credentials
 from .repository import Repository
 from .secrets_store import SecretStore
-from .tracking_models import JournalTrackResult
+from .tracking_models import (
+    CredentialsUnavailableError,
+    JournalTrackResult,
+    SafeTrackingError,
+    TrackingErrorCode,
+    is_browser_tab_crash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +62,24 @@ def _safe_config(config: Mapping) -> dict:
 
 def _tracking_error_code(exc: Exception) -> str:
     if isinstance(exc, BrowserLaunchError):
-        return "browser_start_failed"
-    code = str(getattr(exc, "error_code", "") or exc).strip().casefold()
-    allowed = {
-        "browser_timeout",
-        "credentials_unavailable",
-        "empty_result_anomaly",
-        "provider_login_failed",
-        "provider_unavailable",
-        "unsafe_provider_redirect",
-    }
-    return code if code in allowed else "tracking_failed"
+        return TrackingErrorCode.BROWSER_START_FAILED.value
+    if isinstance(exc, SafeTrackingError):
+        return exc.error_code.value
+    if is_browser_tab_crash(exc):
+        return TrackingErrorCode.BROWSER_TAB_CRASHED.value
+    return TrackingErrorCode.TRACKING_FAILED.value
+
+
+def _configured_max_workers(value: int | None) -> int:
+    if value is None:
+        raw = os.environ.get("MANUSCRIPT_DESK_MAX_BROWSER_WORKERS", "2").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 2
+    if isinstance(value, bool):
+        value = 2
+    return max(1, min(int(value), 8))
 
 
 class TrackingService:
@@ -75,54 +89,74 @@ class TrackingService:
         self,
         repository: Repository,
         secret_store: SecretStore,
-        max_workers: int = 4,
+        max_workers: int | None = None,
         provider_factory: Callable[[str, bool], object] = create_provider,
     ):
         self.repository = repository
         self.secret_store = secret_store
-        self.max_workers = max_workers
+        self.max_workers = _configured_max_workers(max_workers)
         self.provider_factory = provider_factory
 
     def _track_one(self, context: TenantRunContext, config: Mapping, headless: bool) -> dict:
         started = time.monotonic()
         safe = _safe_config(config)
         provider = safe.get("provider") or "scholarone"
-        tracker = None
         try:
             credentials = resolve_tenant_credentials(safe, context.owner_user_id, self.secret_store)
-            tracker = self.provider_factory(provider, headless)
-            manuscripts = tracker.fetch(safe, credentials)
-            return JournalTrackResult(
-                safe.get("journal_name") or "",
-                provider,
-                safe.get("id"),
-                True,
-                manuscripts,
-                elapsed_seconds=time.monotonic() - started,
-            ).to_dict()
         except Exception as exc:
-            error_code = _tracking_error_code(exc)
-            logger.error(
-                "tenant %s journal %s tracking failed: type=%s code=%s",
-                context.owner_user_id,
-                safe.get("id"),
-                type(exc).__name__,
-                error_code,
-            )
-            return JournalTrackResult(
-                safe.get("journal_name") or "",
-                provider,
-                safe.get("id"),
-                False,
-                error_code=error_code,
-                elapsed_seconds=time.monotonic() - started,
-            ).to_dict()
-        finally:
-            if tracker:
-                try:
-                    tracker.close()
-                except Exception:
-                    logger.warning("provider close failed for tenant %s", context.owner_user_id)
+            return self._failed_result(context, safe, provider, CredentialsUnavailableError(), started)
+
+        for attempt in range(2):
+            tracker = None
+            try:
+                tracker = self.provider_factory(provider, headless)
+                manuscripts = tracker.fetch(safe, credentials)
+                return JournalTrackResult(
+                    safe.get("journal_name") or "",
+                    provider,
+                    safe.get("id"),
+                    True,
+                    manuscripts,
+                    elapsed_seconds=time.monotonic() - started,
+                ).to_dict()
+            except Exception as exc:
+                error_code = _tracking_error_code(exc)
+                if error_code == TrackingErrorCode.BROWSER_TAB_CRASHED.value and attempt == 0:
+                    logger.warning(
+                        "tenant %s journal %s browser crashed; retrying with a fresh session",
+                        context.owner_user_id,
+                        safe.get("id"),
+                    )
+                    continue
+                return self._failed_result(context, safe, provider, exc, started)
+            finally:
+                if tracker:
+                    try:
+                        tracker.close()
+                    except Exception:
+                        logger.warning("provider close failed for tenant %s", context.owner_user_id)
+        raise AssertionError("unreachable")
+
+    @staticmethod
+    def _failed_result(
+        context: TenantRunContext, safe: Mapping, provider: str, exc: Exception, started: float
+    ) -> dict:
+        error_code = _tracking_error_code(exc)
+        logger.error(
+            "tenant %s journal %s tracking failed: type=%s code=%s",
+            context.owner_user_id,
+            safe.get("id"),
+            type(exc).__name__,
+            error_code,
+        )
+        return JournalTrackResult(
+            safe.get("journal_name") or "",
+            provider,
+            safe.get("id"),
+            False,
+            error_code=error_code,
+            elapsed_seconds=time.monotonic() - started,
+        ).to_dict()
 
     def _persist(self, context: TenantRunContext, config: Mapping, result: Mapping) -> None:
         config_id = int(config["id"])

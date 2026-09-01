@@ -75,6 +75,5 @@
   </dialog>
 
   <dialog id="password-dialog"><form id="password-form" method="dialog"><div class="dialog-heading"><h2>替换 SMTP 密码</h2><button class="icon-button" type="button" data-close-dialog="password-dialog" aria-label="关闭">×</button></div><p class="notice">密码保存后不会再次显示，也不会写入数据库或日志。</p><label>新密码<input name="password" type="password" required autocomplete="new-password"></label><label>确认密码<input name="confirm_password" type="password" required autocomplete="new-password"></label><div class="form-actions"><button class="button" type="submit">安全保存</button></div></form></dialog>
-  <dialog id="run-summary-dialog"><div class="run-summary-dialog-body"><div class="dialog-heading"><div><p class="eyebrow">RUN DETAILS</p><h2>运行摘要</h2></div><button class="icon-button" type="button" data-close-dialog="run-summary-dialog" aria-label="关闭">×</button></div><pre id="run-summary-detail" class="run-summary-detail" tabindex="0"></pre><div class="form-actions"><button class="button button-quiet" type="button" data-close-dialog="run-summary-dialog">关闭</button></div></div></dialog>
 {% endblock %}
 {% block scripts %}<script defer src="/static/automation/automation.js"></script>{% endblock %}

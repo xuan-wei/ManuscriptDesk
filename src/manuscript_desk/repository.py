@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .automation_summaries import project_automation_summary
 from .schema import assert_schema, connect
 from .security import normalize_email, normalize_username, token_hash
 from .timezones import DEFAULT_TIMEZONE, validate_timezone
@@ -1582,6 +1583,80 @@ class Repository:
             request_item["payload"] = normalized_payload
             return {"created": True, "coverage": "new", "request": request_item}
 
+    def _project_run_summary(
+        self,
+        owner_user_id: int,
+        value: object,
+        *,
+        status: str,
+        kind: str | None = None,
+        historical: bool = False,
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        require_owner(owner_user_id)
+        if conn is None:
+            with self.connection() as owned_conn:
+                return self._project_run_summary(
+                    owner_user_id,
+                    value,
+                    status=status,
+                    kind=kind,
+                    historical=historical,
+                    conn=owned_conn,
+                )
+        names = {
+            int(row["id"]): str(row["journal_name"])
+            for row in conn.execute(
+                "SELECT id,journal_name FROM journal_configs WHERE owner_user_id=?",
+                (owner_user_id,),
+            )
+        }
+        return project_automation_summary(
+            value,
+            status=status,
+            kind=kind,
+            journal_names_by_id=names,
+            historical=historical,
+        )
+
+    def list_automation_runs(self, owner_user_id: int, limit: int = 50) -> list[dict[str, Any]]:
+        require_owner(owner_user_id)
+        safe_limit = max(1, min(int(limit), 100))
+        with self.connection() as conn:
+            rows = conn.execute(
+                """SELECT COALESCE(j.kind,q.kind) AS kind,r.status,r.started_at,r.finished_at,
+                          r.summary_json,j.name AS job_name
+                   FROM automation_job_runs r
+                   LEFT JOIN automation_jobs j ON j.id=r.job_id AND j.owner_user_id=r.owner_user_id
+                   LEFT JOIN automation_run_requests q ON q.id=r.request_id AND q.owner_user_id=r.owner_user_id
+                   WHERE r.owner_user_id=? ORDER BY r.id DESC LIMIT ?""",
+                (owner_user_id, safe_limit),
+            ).fetchall()
+            results = []
+            for row in rows:
+                try:
+                    raw = json.loads(row["summary_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    raw = None
+                results.append(
+                    {
+                        "job_name": row["job_name"] or "手动",
+                        "kind": row["kind"],
+                        "started_at": row["started_at"],
+                        "finished_at": row["finished_at"],
+                        "status": row["status"],
+                        "summary": self._project_run_summary(
+                            owner_user_id,
+                            raw,
+                            status=str(row["status"]),
+                            kind=row["kind"],
+                            historical=True,
+                            conn=conn,
+                        ),
+                    }
+                )
+            return results
+
     def get_run_request(self, owner_user_id: int, request_id: int):
         require_owner(owner_user_id)
         with self.connection() as conn:
@@ -1599,10 +1674,19 @@ class Repository:
                 return None
             item = dict(row)
             item["payload"] = self._decode_run_payload(item.pop("payload_json", "{}"), item["kind"])
+            raw_summary = item.pop("summary_json") or "{}"
             try:
-                item["summary"] = json.loads(item.pop("summary_json") or "{}")
+                decoded_summary = json.loads(raw_summary)
             except (TypeError, json.JSONDecodeError):
-                item["summary"] = {}
+                decoded_summary = None
+            item["summary"] = self._project_run_summary(
+                owner_user_id,
+                decoded_summary,
+                status=str(item.get("result") or item.get("status") or "failed"),
+                kind=item.get("kind"),
+                historical=True,
+                conn=conn,
+            )
             item["active"] = item["status"] in {"queued", "claimed", "running"}
             return item
 
@@ -1634,7 +1718,7 @@ class Repository:
         require_owner(owner_user_id)
         with self.connection(immediate=True) as conn:
             request = conn.execute(
-                "SELECT job_id FROM automation_run_requests WHERE id=? AND owner_user_id=?",
+                "SELECT job_id,kind FROM automation_run_requests WHERE id=? AND owner_user_id=?",
                 (request_id, owner_user_id),
             ).fetchone()
             if not request:
@@ -1643,11 +1727,19 @@ class Repository:
                 "SELECT id FROM automation_job_runs WHERE request_id=? AND owner_user_id=? ORDER BY id DESC LIMIT 1",
                 (request_id, owner_user_id),
             ).fetchone()
+            compact_summary = self._project_run_summary(
+                owner_user_id,
+                summary or {},
+                status="failed",
+                kind=request["kind"],
+                conn=conn,
+            )
+            summary_text = json.dumps(compact_summary, separators=(",", ":"), sort_keys=True)
             if run:
                 conn.execute(
                     """UPDATE automation_job_runs SET status='failed',summary_json=?,finished_at=CURRENT_TIMESTAMP
                        WHERE id=? AND owner_user_id=?""",
-                    (json.dumps(summary or {}, separators=(",", ":"), sort_keys=True), run["id"], owner_user_id),
+                    (summary_text, run["id"], owner_user_id),
                 )
             else:
                 conn.execute(
@@ -1658,7 +1750,7 @@ class Repository:
                         owner_user_id,
                         request["job_id"],
                         request_id,
-                        json.dumps(summary or {}, separators=(",", ":"), sort_keys=True),
+                        summary_text,
                     ),
                 )
             conn.execute(
@@ -1783,7 +1875,7 @@ class Repository:
         require_owner(owner_user_id)
         with self.connection(immediate=True) as conn:
             run = conn.execute(
-                """SELECT r.request_id
+                """SELECT r.request_id,q.kind
                    FROM automation_job_runs r
                    JOIN automation_run_requests q
                      ON q.id=r.request_id AND q.owner_user_id=r.owner_user_id
@@ -1792,9 +1884,21 @@ class Repository:
             ).fetchone()
             if not run:
                 return False
+            compact_summary = self._project_run_summary(
+                owner_user_id,
+                summary or {},
+                status=status,
+                kind=run["kind"],
+                conn=conn,
+            )
             conn.execute(
                 "UPDATE automation_job_runs SET status=?,summary_json=?,finished_at=CURRENT_TIMESTAMP WHERE id=? AND owner_user_id=?",
-                (status, json.dumps(summary or {}, separators=(",", ":"), sort_keys=True), run_id, owner_user_id),
+                (
+                    status,
+                    json.dumps(compact_summary, separators=(",", ":"), sort_keys=True),
+                    run_id,
+                    owner_user_id,
+                ),
             )
             request_status = "finished" if status in {"success", "partial", "finished", "no_changes"} else "failed"
             conn.execute(

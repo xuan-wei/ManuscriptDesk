@@ -706,6 +706,37 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
     )
 
 
+def test_manual_update_frontend_polls_and_reloads_each_request_once():
+    template = (Path(__file__).parents[1] / "src/manuscript_desk/templates/index.html").read_text()
+
+    assert "let _watchedRequestId = null;" in template
+    assert "function stopPolling()" in template
+    assert "if (_pollController) _pollController.abort();" in template
+    assert "const generation = _pollGeneration;" in template
+    assert "if (generation !== _pollGeneration || !resp.ok) return;" in template
+    assert "if (generation !== _pollGeneration || _watchedRequestId === null) return;" in template
+    assert "if (!watchedTerminal && _watchedRequestId !== null) {" in template
+    assert "_watchedRequestId = null;\n                cancelPendingReload();" in template
+    assert "if (renderUpdateStatus(s)) startPolling();" in template
+    assert "watchActiveRequest(startResult.request_id);" in template
+    assert "setUpdateBtn(true);\n            stopPolling();" in template
+    assert "sessionGet(_reloadedRequestKey) === key" in template
+    assert "sessionSet(_reloadedRequestKey, key);" in template
+    assert "key !== _watchedRequestId" in template
+    assert "s.outcome === 'success' || s.outcome === 'partial'" in template
+    assert "if (_reloadRequestId !== null && _reloadRequestId !== key) cancelPendingReload();" in template
+    assert "_reloadScheduled" not in template
+
+
+def test_manual_update_frontend_status_dismissal_is_request_scoped():
+    template = (Path(__file__).parents[1] / "src/manuscript_desk/templates/index.html").read_text()
+
+    assert "const _dismissedRequestPrefix = 'manuscriptDesk.update.dismissed.';" in template
+    assert "sessionSet(`${_dismissedRequestPrefix}${_statusRequestId}`, '1');" in template
+    assert "isStatusDismissed(requestId)" in template
+    assert "bar.style.display = '';" in template
+
+
 def test_manual_update_enqueue_and_status(tmp_path):
     repo, _, _, app = build(tmp_path)
     owner = add_user(repo, "alice@example.test")
@@ -934,12 +965,19 @@ def test_automation_runs_api_uses_job_or_request_kind(tmp_path):
 
     response = client.get("/api/automation/runs")
     assert response.status_code == 200
-    assert response.json()["runs"][0]["kind"] == "update"
-    assert response.json()["runs"][0]["job_name"] == "手动"
+    run = response.json()["runs"][0]
+    assert run["kind"] == "update"
+    assert run["job_name"] == "手动"
+    assert "summary" in run and "summary_json" not in run
+    assert run["summary"]["message_code"] == "historical_summary_unavailable"
     page = client.get("/automation")
     assert page.status_code == 200
     assert 'class="run-table"' in page.text
-    assert 'id="run-summary-dialog"' in page.text
+    assert 'id="run-summary-dialog"' not in page.text
+    script = (Path(__file__).parents[1] / "src/manuscript_desk/static/automation.js").read_text()
+    assert "summary_json" not in script
+    assert "data-run-summary" not in script
+    assert "部分完成" in script and "没有发现变化" in script
 
 
 def test_shortcut_token_links_are_persisted_and_scoped(tmp_path):

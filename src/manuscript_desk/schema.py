@@ -1,7 +1,11 @@
+import ipaddress
+import json
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from . import APP_SCHEMA_VERSION
+from .automation_summaries import project_automation_summary
 
 SCHEMA_SQL = """
 CREATE TABLE app_schema (
@@ -374,7 +378,7 @@ CREATE TABLE automation_ack_tokens (
     FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 INSERT INTO app_schema(singleton, version, application_compatibility, migration_id)
-VALUES(1, 9, 'manuscript-desk-multitenant-v9', 'fresh');
+VALUES(1, 10, 'manuscript-desk-multitenant-v10', 'fresh');
 INSERT INTO app_settings(singleton, self_registration_enabled) VALUES(1, 0);
 """
 
@@ -630,6 +634,79 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _canonicalize_legacy_scholarone_url(value: object) -> tuple[str, str] | None:
+    """Strict, local migration helper; avoids importing provider/web layers."""
+    raw = str(value or "").strip()
+    if not raw or any(ord(character) < 32 or ord(character) == 127 for character in raw):
+        return None
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+        host = parsed.hostname.rstrip(".").encode("idna").decode("ascii").casefold() if parsed.hostname else ""
+    except (UnicodeError, ValueError):
+        return None
+    if parsed.scheme.casefold() != "http" or not host or parsed.username is not None or parsed.password is not None:
+        return None
+    if parsed.fragment or port not in (None, 80):
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+    if host != "manuscriptcentral.com" and not host.endswith(".manuscriptcentral.com"):
+        return None
+    path = parsed.path or "/"
+    canonical = urlunsplit(("https", host, path, parsed.query, ""))
+    parts = [part for part in path.split("/") if part]
+    site_key = f"{host}:{parts[0].casefold() if parts else 'default'}"
+    return canonical, site_key
+
+
+def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    configs = conn.execute(
+        "SELECT id,journal_url FROM journal_configs WHERE provider='scholarone'"
+    ).fetchall()
+    for config in configs:
+        canonical = _canonicalize_legacy_scholarone_url(config["journal_url"])
+        if canonical:
+            conn.execute(
+                "UPDATE journal_configs SET journal_url=?,site_key=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (canonical[0], canonical[1], config["id"]),
+            )
+
+    names_by_owner: dict[int, dict[int, str]] = {}
+    for row in conn.execute("SELECT owner_user_id,id,journal_name FROM journal_configs"):
+        names_by_owner.setdefault(int(row["owner_user_id"]), {})[int(row["id"])] = str(row["journal_name"])
+    runs = conn.execute(
+        """SELECT r.id,r.owner_user_id,r.status,r.summary_json,COALESCE(j.kind,q.kind) AS kind
+           FROM automation_job_runs r
+           LEFT JOIN automation_jobs j ON j.id=r.job_id AND j.owner_user_id=r.owner_user_id
+           LEFT JOIN automation_run_requests q ON q.id=r.request_id AND q.owner_user_id=r.owner_user_id"""
+    ).fetchall()
+    for run in runs:
+        try:
+            raw_summary = json.loads(run["summary_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            raw_summary = None
+        compact = project_automation_summary(
+            raw_summary,
+            status=str(run["status"]),
+            kind=run["kind"],
+            journal_names_by_id=names_by_owner.get(int(run["owner_user_id"]), {}),
+            historical=True,
+        )
+        conn.execute(
+            "UPDATE automation_job_runs SET summary_json=? WHERE id=?",
+            (json.dumps(compact, separators=(",", ":"), sort_keys=True), run["id"]),
+        )
+    conn.execute(
+        "UPDATE app_schema SET version=10,application_compatibility='manuscript-desk-multitenant-v10',"
+        "migration_id='v9-to-v10-compact-run-history',migrated_at=CURRENT_TIMESTAMP WHERE singleton=1"
+    )
+
+
 def migrate_database(db_path: str | Path) -> None:
     conn = connect(db_path)
     try:
@@ -662,6 +739,9 @@ def migrate_database(db_path: str | Path) -> None:
         if version == 8:
             _migrate_v8_to_v9(conn)
             version = 9
+        if version == 9:
+            _migrate_v9_to_v10(conn)
+            version = 10
         if version != APP_SCHEMA_VERSION:
             raise SchemaError(f"unsupported schema version: {version}")
         conn.commit()

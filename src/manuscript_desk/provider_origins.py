@@ -4,6 +4,8 @@ import ipaddress
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
+from .tracking_models import SafeTrackingError, TrackingErrorCode
+
 
 class ProviderValidationError(ValueError):
     """Raised when a configured or current provider URL is not trusted."""
@@ -69,8 +71,25 @@ def normalize_provider_url(provider: str, value: str) -> str:
     return get_provider_origin(provider).normalize_url(value)
 
 
-class UnsafeNavigationError(RuntimeError):
+def canonicalize_legacy_scholarone_url(value: str) -> str:
+    """Upgrade a trusted legacy ScholarOne URL to HTTPS without changing its site path."""
+
+    raw = (value or "").strip()
+    if not raw or any(ord(character) < 32 for character in raw):
+        raise ProviderValidationError("provider_url_invalid")
+    parsed = urlsplit(raw)
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"}:
+        raise ProviderValidationError("provider_https_required")
+    if scheme == "http":
+        parsed = parsed._replace(scheme="https")
+    return get_provider_origin("scholarone").normalize_url(urlunsplit(parsed))
+
+
+class UnsafeNavigationError(SafeTrackingError):
     """Safe public error raised after an unexpected provider redirect."""
+
+    error_code = TrackingErrorCode.UNSAFE_PROVIDER_REDIRECT
 
 
 class SafeProviderNavigation:
@@ -83,7 +102,7 @@ class SafeProviderNavigation:
         try:
             return self.origin.normalize_url(target)
         except ProviderValidationError as exc:
-            raise UnsafeNavigationError("unsafe_provider_redirect") from exc
+            raise UnsafeNavigationError() from exc
 
     def open(self, value: str) -> None:
         self.driver.get(self.validate(value))

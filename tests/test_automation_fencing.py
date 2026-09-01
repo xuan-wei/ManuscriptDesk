@@ -74,8 +74,8 @@ def test_v7_migration_adds_fence_columns(tmp_path):
         ).fetchone()
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(automation_run_requests)")}
     assert dict(schema) == {
-        "version": 9,
-        "application_compatibility": "manuscript-desk-multitenant-v9",
-        "migration_id": "v8-to-v9-smtp-sources",
+        "version": 10,
+        "application_compatibility": "manuscript-desk-multitenant-v10",
+        "migration_id": "v9-to-v10-compact-run-history",
     }
     assert {"claim_generation", "claim_token", "heartbeat_at"} <= columns

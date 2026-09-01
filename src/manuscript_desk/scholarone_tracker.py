@@ -11,7 +11,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from .browser_factory import create_chrome_driver
 from .config import SYSTEM_CONFIG
-from .provider_origins import SafeProviderNavigation
+from .provider_origins import (
+    SafeProviderNavigation,
+    UnsafeNavigationError,
+    canonicalize_legacy_scholarone_url,
+)
+from .tracking_models import (
+    ProviderLoginError,
+    ProviderUnavailableError,
+    raise_if_browser_tab_crashed,
+)
 from .tracking_policy import classify_status, extract_original_id_and_version
 
 logger = logging.getLogger(__name__)
@@ -229,7 +238,7 @@ class ScholarOneTracker:
         try:
             logger.info("正在打开 ScholarOne 登录页")
             navigation = SafeProviderNavigation(self.driver, "scholarone")
-            navigation.open(journal_url)
+            navigation.open(canonicalize_legacy_scholarone_url(journal_url))
 
             # 查找用户名输入框
             username_field = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.NAME, "USERID")))
@@ -245,6 +254,7 @@ class ScholarOneTracker:
             # 点击登录按钮 (使用a标签的id)
             login_button = self.driver.find_element(By.ID, "logInButton")
             login_button.click()
+            navigation.validate()
 
             # 等待登录完成，检查是否成功（检查是否有用户下拉菜单或Log Out链接）
             WebDriverWait(self.driver, SYSTEM_CONFIG["timeout"]).until(
@@ -254,6 +264,7 @@ class ScholarOneTracker:
                     EC.presence_of_element_located((By.XPATH, "//a[contains(@onclick, 'LOGIN')]")),
                 )
             )
+            navigation.validate()
 
             logger.info("登录成功")
             return True
@@ -261,8 +272,11 @@ class ScholarOneTracker:
         except TimeoutException:
             logger.error("登录超时")
             return False
-        except Exception as e:
-            logger.error(f"登录失败: {str(e)}")
+        except UnsafeNavigationError:
+            raise
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("登录失败: type=%s", type(exc).__name__)
             return False
 
     def navigate_to_author_dashboard(self):
@@ -296,14 +310,21 @@ class ScholarOneTracker:
             try:
                 if self.navigate_to_author_dashboard_try_href_based_links():
                     logger.info("✅ 导航到作者仪表板成功!")
+                    SafeProviderNavigation(self.driver, "scholarone").validate()
                     return True
-            except Exception as e:
-                logger.warning(f"❌ 导航到作者仪表板失败: {str(e)}")
+            except UnsafeNavigationError:
+                raise
+            except Exception as exc:
+                raise_if_browser_tab_crashed(exc)
+                logger.warning("导航到作者仪表板失败: type=%s", type(exc).__name__)
 
             return False
 
-        except Exception as e:
-            logger.error(f"导航到作者仪表板失败: {str(e)}")
+        except UnsafeNavigationError:
+            raise
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("导航到作者仪表板失败: type=%s", type(exc).__name__)
             return False
 
     def navigate_to_author_dashboard_try_href_based_links(self):
@@ -324,14 +345,22 @@ class ScholarOneTracker:
                         logger.info(f"尝试href链接: {text} -> {href}")
 
                         self.driver.execute_script("arguments[0].click();", link)
+                        SafeProviderNavigation(self.driver, "scholarone").validate()
                         time.sleep(1)  # 等待JavaScript执行和页面加载
                         if self._wait_for_author_dashboard(timeout=15):
+                            SafeProviderNavigation(self.driver, "scholarone").validate()
                             return True
-                    except Exception as e:
-                        logger.warning(f"href链接点击失败: {str(e)}")
+                    except UnsafeNavigationError:
+                        raise
+                    except Exception as exc:
+                        raise_if_browser_tab_crashed(exc)
+                        logger.warning("href链接点击失败: type=%s", type(exc).__name__)
                         continue
-            except Exception as e:
-                logger.warning(f"href模式 '{pattern}' 查找失败: {str(e)}")
+            except UnsafeNavigationError:
+                raise
+            except Exception as exc:
+                raise_if_browser_tab_crashed(exc)
+                logger.warning("href模式查找失败: type=%s", type(exc).__name__)
                 continue
         return False
 
@@ -371,15 +400,17 @@ class ScholarOneTracker:
                     if indicator():
                         logger.info(f"✅ 成功检测到作者仪表板（指标 {i}）")
                         return True
-                except Exception as e:
-                    logger.debug(f"指标 {i} 检测失败: {str(e)}")
+                except Exception as exc:
+                    raise_if_browser_tab_crashed(exc)
+                    logger.debug("作者仪表板指标检测失败: type=%s", type(exc).__name__)
                     continue
 
             logger.warning("❌ 未检测到作者仪表板标识")
             return False
 
-        except Exception as e:
-            logger.warning(f"❌ 等待作者仪表板超时或出错: {str(e)}")
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.warning("等待作者仪表板超时或出错: type=%s", type(exc).__name__)
             return False
 
     def _parse_manuscripts_table(self, submitted_by_me: bool) -> list[ManuscriptStatus]:
@@ -408,14 +439,16 @@ class ScholarOneTracker:
                         logger.info(f"✅ 第{i}行解析成功: {manuscript.manuscript_id} - {manuscript.title[:30]}...")
                     else:
                         logger.info(f"⏭️ 第{i}行跳过（可能是表头或空行）")
-                except Exception as e:
-                    logger.warning(f"解析第 {i} 行时出错: {str(e)}")
+                except Exception as exc:
+                    raise_if_browser_tab_crashed(exc)
+                    logger.warning("解析论文行失败: type=%s", type(exc).__name__)
                     continue
 
             return manuscripts
 
-        except Exception as e:
-            logger.error(f"解析表格失败: {str(e)}")
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("解析表格失败: type=%s", type(exc).__name__)
             return []
 
     def _parse_manuscript_row_simple(self, row, submitted_by_me: bool) -> ManuscriptStatus | None:
@@ -537,8 +570,9 @@ class ScholarOneTracker:
                 last_updated=datetime.now(),
             )
 
-        except Exception as e:
-            logger.error(f"解析论文行时出错: {str(e)}")
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("解析论文行失败: type=%s", type(exc).__name__)
             return None
 
     def get_manuscripts_submitted_by_me(self) -> list[ManuscriptStatus]:
@@ -572,14 +606,16 @@ class ScholarOneTracker:
                         logger.info(f"找到决策链接: {xpath}")
                         decisions_link = links[0]
                         break
-                except Exception as e:
-                    logger.warning(f"查找决策链接失败 '{xpath}': {str(e)}")
+                except Exception as exc:
+                    raise_if_browser_tab_crashed(exc)
+                    logger.warning("查找决策链接失败: type=%s", type(exc).__name__)
                     continue
 
             if decisions_link:
                 # 点击找到的链接
                 logger.info(f"📌 点击决策链接: {decisions_link.text}")
                 self.driver.execute_script("arguments[0].click();", decisions_link)
+                SafeProviderNavigation(self.driver, "scholarone").validate()
 
                 # 解析表格
                 manuscripts = self._parse_manuscripts_table(submitted_by_me=True)
@@ -589,8 +625,11 @@ class ScholarOneTracker:
             logger.info(f"🎉 成功获取 {len(manuscripts)} 篇有决策的论文")
             return manuscripts
 
-        except Exception as e:
-            logger.error(f"获取论文状态失败: {str(e)}")
+        except UnsafeNavigationError:
+            raise
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("获取论文状态失败: type=%s", type(exc).__name__)
             return []
 
     def get_manuscripts_submitted_by_coauthors(self) -> list[ManuscriptStatus]:
@@ -608,8 +647,9 @@ class ScholarOneTracker:
                     logger.info(f"找到共同作者链接: {xpath}")
                     coauthor_link = links[0]
 
-            except Exception as e:
-                logger.warning(f"查找共同作者链接失败 '{xpath}': {str(e)}")
+            except Exception as exc:
+                raise_if_browser_tab_crashed(exc)
+                logger.warning("查找共同作者链接失败: type=%s", type(exc).__name__)
 
             if not coauthor_link:
                 logger.info("❌ 未找到共同作者论文链接，可能没有共同作者论文")
@@ -618,6 +658,7 @@ class ScholarOneTracker:
             # 点击共同作者链接
             logger.info(f"📌 点击共同作者链接: {coauthor_link.text}")
             self.driver.execute_script("arguments[0].click();", coauthor_link)
+            SafeProviderNavigation(self.driver, "scholarone").validate()
 
             # 解析共同作者论文表格
             manuscripts = self._parse_manuscripts_table(submitted_by_me=False)
@@ -625,8 +666,11 @@ class ScholarOneTracker:
             logger.info(f"🎉 成功获取 {len(manuscripts)} 篇共同作者论文")
             return manuscripts
 
-        except Exception as e:
-            logger.error(f"获取共同作者论文失败: {str(e)}")
+        except UnsafeNavigationError:
+            raise
+        except Exception as exc:
+            raise_if_browser_tab_crashed(exc)
+            logger.error("获取共同作者论文失败: type=%s", type(exc).__name__)
             return []
 
     def save_manuscript_to_db(self, manuscript: ManuscriptStatus) -> bool:
@@ -761,9 +805,9 @@ class ScholarOneTracker:
     def fetch(self, config: dict, credentials) -> list[dict]:
         """Fetch one ScholarOne journal without writing to SQLite."""
         if not self.login_to_journal(config["journal_url"], credentials.username, credentials.password):
-            raise RuntimeError("无法登录到期刊")
+            raise ProviderLoginError()
         if not self.navigate_to_author_dashboard():
-            raise RuntimeError("无法导航到作者仪表板")
+            raise ProviderUnavailableError()
 
         manuscripts = []
         decisions_manuscripts = self.get_manuscripts_submitted_by_me()

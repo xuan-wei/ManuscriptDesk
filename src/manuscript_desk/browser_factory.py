@@ -69,7 +69,8 @@ def create_chrome_driver(headless: bool = True) -> webdriver.Chrome:
     if headless:
         options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    if os.environ.get("MANUSCRIPT_DESK_DISABLE_DEV_SHM_USAGE", "").strip().casefold() in {"1", "true", "yes"}:
+        options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--blink-settings=imagesEnabled=false")

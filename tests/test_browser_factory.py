@@ -53,6 +53,7 @@ def test_browser_factory_uses_isolated_profile_and_cleans_up(monkeypatch, tmp_pa
     assert root.exists() and root.stat().st_mode & 0o777 == 0o700
     assert "--headless=new" in arguments
     assert "--remote-debugging-pipe" in arguments
+    assert "--disable-dev-shm-usage" not in arguments
     assert captured["options"].binary_location == str(chromium)
     assert captured["service"].env["HOME"].startswith(str(root))
     assert captured["service"].env["XDG_RUNTIME_DIR"].startswith(str(root))
@@ -61,6 +62,30 @@ def test_browser_factory_uses_isolated_profile_and_cleans_up(monkeypatch, tmp_pa
 
     assert fake.quit_calls == 1
     assert not root.exists()
+
+
+def test_browser_factory_can_opt_out_of_dev_shm(monkeypatch, tmp_path):
+    chromium = tmp_path / "chromium"
+    chromedriver = tmp_path / "chromedriver"
+    for path in (chromium, chromedriver):
+        path.write_text("binary")
+        path.chmod(0o700)
+    monkeypatch.setenv("MANUSCRIPT_DESK_CHROMIUM", str(chromium))
+    monkeypatch.setenv("MANUSCRIPT_DESK_CHROMEDRIVER", str(chromedriver))
+    monkeypatch.setenv("MANUSCRIPT_DESK_DISABLE_DEV_SHM_USAGE", "true")
+    monkeypatch.setattr(browser_factory, "_CACHED_DRIVER_PATH", None)
+    monkeypatch.setattr(browser_factory, "_CACHED_CHROMIUM_PATH", None)
+    captured = {}
+    fake = FakeDriver()
+
+    def create_driver(*, service, options):
+        captured["options"] = options
+        return fake
+
+    monkeypatch.setattr(browser_factory.webdriver, "Chrome", create_driver)
+    driver = browser_factory.create_chrome_driver()
+    assert "--disable-dev-shm-usage" in captured["options"].arguments
+    driver.quit()
 
 
 def test_browser_factory_wraps_launch_failure_and_cleans_up(monkeypatch, tmp_path):

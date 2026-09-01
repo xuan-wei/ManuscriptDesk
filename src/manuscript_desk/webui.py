@@ -102,6 +102,7 @@ def _now_iso() -> str:
 _UPDATE_MESSAGES = {
     "no_enabled_journals": "尚未启用期刊配置，请先在期刊配置页面添加或启用期刊。",
     "browser_start_failed": "自动化浏览器无法启动，请联系管理员检查运行环境。",
+    "browser_tab_crashed": "期刊页面的浏览器会话崩溃，系统重试后仍未完成，请稍后再试。",
     "browser_timeout": "期刊页面响应超时，请稍后重试。",
     "credentials_unavailable": "该期刊的登录凭据不可用，请检查期刊配置。",
     "provider_login_failed": "无法登录期刊系统，请检查账号、密码或期刊登录状态。",
@@ -151,7 +152,7 @@ def _update_status_view(request_item: dict | None, last_db_update: str | None = 
     phase = status if active or status in {"failed", "cancelled"} else "finished"
     if status == "finished" and result == "failed":
         phase = "failed"
-    error_code = str(summary.get("error") or "").strip() or None
+    error_code = str(summary.get("error_code") or summary.get("error") or "").strip() or None
     if error_code not in _UPDATE_MESSAGES:
         error_code = "tracking_failed" if phase == "failed" else None
     started = _parse_utc(request_item.get("started_at"))
@@ -2171,26 +2172,7 @@ def install_ui(
         session, error = api_guard(request)
         if error:
             return error
-        with repository.connection() as conn:
-            rows = conn.execute(
-                """SELECT COALESCE(j.kind,q.kind) AS kind,r.status,r.started_at,r.summary_json,j.name AS job_name
-                   FROM automation_job_runs r
-                   LEFT JOIN automation_jobs j ON j.id=r.job_id AND j.owner_user_id=r.owner_user_id
-                   LEFT JOIN automation_run_requests q ON q.id=r.request_id AND q.owner_user_id=r.owner_user_id
-                   WHERE r.owner_user_id=? ORDER BY r.id DESC LIMIT 50""",
-                (session["user_id"],),
-            ).fetchall()
-        runs = [
-            {
-                "job_name": row["job_name"] or "手动",
-                "kind": row["kind"],
-                "started_at": row["started_at"],
-                "status": row["status"],
-                "summary_json": row["summary_json"],
-            }
-            for row in rows
-        ]
-        return {"runs": runs}
+        return {"runs": repository.list_automation_runs(session["user_id"], limit=50)}
 
     @app.get("/api/automation/smtp")
     async def api_get_smtp(request: Request):
