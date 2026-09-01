@@ -33,17 +33,25 @@
     </section>
 
     <section class="panel">
-      <div class="panel-heading"><div><p class="eyebrow">DELIVERY</p><h2>SMTP 设置</h2></div><span id="smtp-password-state" class="badge">读取中</span></div>
-      <form id="smtp-form" class="form-grid">
-        <label>SMTP 主机<input name="host" required autocomplete="off"></label>
-        <label>端口<input name="port" required type="number" min="1" max="65535"></label>
-        <label>TLS 模式<select name="security_mode"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option></select></label>
-        <label>用户名<input name="username" autocomplete="username"></label>
-        <label>发件地址<input name="sender_address" required type="email"></label>
-        <label>发件名称<input name="sender_name" autocomplete="organization"></label>
-        <label>连接超时（秒）<input name="connect_timeout_seconds" type="number" min="3" max="120" value="20"></label>
-        <div class="form-actions"><button class="button" type="submit">保存 SMTP</button><button class="button button-quiet" id="replace-password" type="button">替换密码</button><button class="button button-quiet" id="test-smtp" type="button">发送测试邮件</button></div>
-      </form>
+      <div class="panel-heading"><div><p class="eyebrow">DELIVERY</p><h2>邮件发送通道</h2></div><span id="smtp-password-state" class="badge">读取中</span></div>
+      <fieldset class="smtp-source-group">
+        <legend>选择自动化邮件使用的发送通道</legend>
+        <label class="smtp-source-card" id="system-smtp-card"><input type="radio" name="smtp_source" value="system"><span><strong>系统发送通道</strong><small>由管理员维护；不会向普通用户显示服务器、账号或发件人配置。</small><span id="system-smtp-status" class="smtp-source-status">读取中</span><time id="system-smtp-tested-at"></time></span></label>
+        <label class="smtp-source-card"><input type="radio" name="smtp_source" value="personal"><span><strong>个人 SMTP</strong><small>使用你自己保存的 SMTP 配置与密码。</small></span></label>
+      </fieldset>
+      <p id="smtp-source-warning" class="notice" hidden></p>
+      <div id="personal-smtp-panel">
+        <form id="smtp-form" class="form-grid">
+          <label>SMTP 主机<input name="host" required autocomplete="off"></label>
+          <label>端口<input name="port" required type="number" min="1" max="65535"></label>
+          <label>TLS 模式<select name="security_mode"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option></select></label>
+          <label>用户名<input name="username" autocomplete="username"></label>
+          <label>发件地址<input name="sender_address" required type="email"></label>
+          <label>发件名称<input name="sender_name" autocomplete="organization"></label>
+          <label>连接超时（秒）<input name="connect_timeout_seconds" type="number" min="3" max="120" value="20"></label>
+          <div class="form-actions"><button class="button" type="submit">保存个人 SMTP</button><button class="button button-quiet" id="replace-password" type="button">替换密码</button><button class="button button-quiet" id="test-smtp" type="button">检查个人配置</button></div>
+        </form>
+      </div>
     </section>
 
     <section class="panel">
@@ -55,7 +63,7 @@
       <div class="dialog-heading"><div><p class="eyebrow">JOB EDITOR</p><h2 id="job-dialog-title">任务</h2></div><button class="icon-button" type="button" data-close-dialog="job-dialog" aria-label="关闭">×</button></div>
       <input name="id" type="hidden"><input name="kind" type="hidden">
       <label>任务名称<input name="name" required maxlength="100"></label>
-      <div class="two-cols"><label>Cron（分 时 日 月 周）<input name="cron_expression" required placeholder="0 7 * * *"></label><label>IANA 时区<input name="timezone" required value="Asia/Shanghai" placeholder="Asia/Shanghai"></label></div>
+      <div class="two-cols"><label>Cron（分 时 日 月 周）<input name="cron_expression" required placeholder="0 7 * * *"></label><label>时区<select name="timezone" required>{% for value, label in timezone_choices %}<option value="{{ value }}"{% if value == default_timezone %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></div>
       <div id="email-fields" hidden>
         <div class="two-cols"><label>稿件范围<select name="manuscript_scope"><option value="starred">标星稿件</option><option value="working">进行中稿件</option><option value="all">全部稿件</option></select></label><label>发送策略<select name="delivery_policy"><option value="changes_only">仅新变化</option><option value="always">每次都发送</option></select></label></div>
         <label>收件人（每行一个）<textarea name="recipients" rows="4" placeholder="name@example.com"></textarea></label>

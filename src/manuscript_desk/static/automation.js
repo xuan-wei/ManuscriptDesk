@@ -4,6 +4,7 @@ let jobs = [];
 let runSummaries = [];
 let refreshTimer = null;
 let loading = false;
+let smtpState = null;
 const watchedRequests = new Map();
 
 const phaseLabels = {
@@ -117,6 +118,30 @@ function scheduleRefresh(active) {
   refreshTimer = setTimeout(() => load().catch(error => toast(error.message)), active ? 3000 : 15000);
 }
 
+function renderSmtpState(smtp) {
+  smtpState = smtp;
+  const personal = smtp.personal || {};
+  for (const [key, value] of Object.entries(personal)) {
+    const element = $(`#smtp-form [name="${key}"]`);
+    if (element && value != null) element.value = value;
+  }
+  $('#smtp-password-state').textContent = personal.password_configured ? '个人密码已配置' : '个人密码未配置';
+  $('#smtp-password-state').className = `badge ${personal.password_configured ? 'success' : 'failed'}`;
+  const sourceInput = document.querySelector(`input[name="smtp_source"][value="${smtp.source}"]`);
+  if (sourceInput) sourceInput.checked = true;
+  const system = smtp.system || {};
+  $('#system-smtp-status').textContent = system.message || '系统发送通道状态未知';
+  $('#system-smtp-status').className = `smtp-source-status ${system.health || ''}`;
+  $('#system-smtp-tested-at').textContent = system.tested_at ? `最近测试：${system.tested_at}` : '';
+  const systemRadio = document.querySelector('input[name="smtp_source"][value="system"]');
+  systemRadio.disabled = !system.selectable && smtp.source !== 'system';
+  $('#system-smtp-card').classList.toggle('is-disabled', systemRadio.disabled);
+  $('#personal-smtp-panel').hidden = smtp.source === 'system';
+  const warning = $('#smtp-source-warning');
+  warning.hidden = !(smtp.source === 'system' && !system.selectable);
+  warning.textContent = warning.hidden ? '' : '系统发送通道当前不可用，邮件任务会被阻止。请等待管理员重新测试，或切换回个人 SMTP。';
+}
+
 async function load() {
   if (loading) return;
   loading = true;
@@ -136,12 +161,7 @@ async function load() {
     $('#update-state').textContent = data.active_update ? activeLabel({kind: 'update', active_request: data.active_update}) : '空闲';
     $('#update-jobs').innerHTML = updates.length ? updates.map(jobCard).join('') : '尚无更新任务';
     $('#email-jobs').innerHTML = emails.length ? emails.map(jobCard).join('') : '尚无邮件任务';
-    for (const [key, value] of Object.entries(smtp)) {
-      const element = $(`#smtp-form [name="${key}"]`);
-      if (element && value != null) element.value = value;
-    }
-    $('#smtp-password-state').textContent = smtp.password_configured ? '密码已配置' : '密码未配置';
-    $('#smtp-password-state').className = `badge ${smtp.password_configured ? 'success' : 'failed'}`;
+    renderSmtpState(smtp);
     runSummaries = runs.runs.map(run => String(run.summary_json ?? ''));
     $('#run-history').innerHTML = runs.runs.length ? runs.runs.map((run, index) => {
       const summary = runSummaries[index];
@@ -168,7 +188,14 @@ function openJob(kind, job = null) {
   form.kind.value = kind;
   form.name.value = job?.name || '';
   form.cron_expression.value = job?.cron_expression || (kind === 'update' ? '0 7 * * *' : '30 8 * * 1-5');
-  form.timezone.value = job?.timezone || 'Asia/Shanghai';
+  const timezone = job?.timezone || 'Asia/Shanghai';
+  form.timezone.querySelectorAll('[data-saved-timezone]').forEach(option => option.remove());
+  if (![...form.timezone.options].some(option => option.value === timezone)) {
+    const option = new Option(`${timezone}（当前已保存）`, timezone);
+    option.dataset.savedTimezone = 'true';
+    form.timezone.add(option);
+  }
+  form.timezone.value = timezone;
   form.enabled.checked = job ? Boolean(job.enabled) : true;
   $('#email-fields').hidden = kind !== 'email';
   if (kind === 'email') {
@@ -251,6 +278,20 @@ $('#job-form').addEventListener('submit', async event => {
   } catch (error) { toast(error.message); }
 });
 
+document.querySelectorAll('input[name="smtp_source"]').forEach(input => {
+  input.addEventListener('change', async event => {
+    if (!event.target.checked || !smtpState || event.target.value === smtpState.source) return;
+    try {
+      await api('/api/automation/smtp/source', {method: 'PUT', body: JSON.stringify({source: event.target.value})});
+      toast(event.target.value === 'system' ? '已切换到系统发送通道' : '已切换到个人 SMTP');
+      await load();
+    } catch (error) {
+      renderSmtpState(smtpState);
+      toast(error.message);
+    }
+  });
+});
+
 $('#smtp-form').addEventListener('submit', async event => {
   event.preventDefault();
   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -278,11 +319,9 @@ $('#password-form').addEventListener('submit', async event => {
 });
 
 $('#test-smtp').onclick = async () => {
-  const recipient = prompt('测试邮件收件地址');
-  if (!recipient) return;
   try {
-    await api('/api/automation/smtp/test', {method: 'POST', body: JSON.stringify({recipient})});
-    toast('SMTP 配置已就绪');
+    const result = await api('/api/automation/smtp/test', {method: 'POST', body: '{}'});
+    toast(result.message || '个人 SMTP 配置已就绪');
   } catch (error) { toast(error.message); }
 };
 $('#reload-jobs').onclick = async () => {

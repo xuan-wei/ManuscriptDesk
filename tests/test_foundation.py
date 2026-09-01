@@ -150,6 +150,31 @@ def test_schema_v6_migrates_shortcut_settings(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM user_shortcut_settings").fetchone()[0] == 0
 
 
+def test_schema_v8_migrates_smtp_sources_and_health(tmp_path):
+    path = tmp_path / "v8.db"
+    create_database(path)
+    with connect(path) as conn:
+        conn.execute("UPDATE app_schema SET version=8,application_compatibility='manuscript-desk-multitenant-v8'")
+        conn.commit()
+
+    migrate_database(path)
+
+    with connect(path) as conn:
+        assert_schema(conn)
+        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        smtp_columns = {row["name"] for row in conn.execute("PRAGMA table_info(system_smtp_config)")}
+        marker = conn.execute("SELECT migration_id FROM app_schema WHERE singleton=1").fetchone()[0]
+    assert "smtp_source" in user_columns
+    assert {
+        "config_generation",
+        "last_test_status",
+        "last_tested_generation",
+        "last_tested_at",
+        "last_test_error_code",
+    } <= smtp_columns
+    assert marker == "v8-to-v9-smtp-sources"
+
+
 def test_shortcut_settings_are_owner_scoped(tmp_path):
     repo = make_repo(tmp_path)
     alice = add_user(repo, "alice@example.test")

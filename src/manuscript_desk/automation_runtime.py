@@ -11,12 +11,20 @@ from email.utils import make_msgid
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from .repository import Repository, manuscript_fingerprint
+from .repository import Repository, SmtpUnavailableError, manuscript_fingerprint
 from .secrets_store import SecretStore
 from .security import random_token, token_hash
 from .tracking_service import TenantRunContext, TrackingService
 
 logger = logging.getLogger(__name__)
+
+
+def _automation_error_code(exc: Exception) -> str:
+    if isinstance(exc, SmtpUnavailableError):
+        return exc.error_code
+    if str(exc) == "email_delivery_failed":
+        return "email_delivery_failed"
+    return "automation_failed"
 
 
 class AutomationRuntime:
@@ -136,16 +144,17 @@ class AutomationRuntime:
                 logger.error(
                     "automation run failed owner=%s request=%s type=%s", owner, claimed["id"], type(exc).__name__
                 )
+                error_code = _automation_error_code(exc)
                 if run_id is not None:
                     self.repository.finish_run(
                         owner,
                         run_id,
                         "failed",
-                        {"error": "automation_failed"},
+                        {"error": error_code},
                         claim_token=claimed["claim_token"],
                     )
                 else:
-                    self.repository.fail_run_request(owner, claimed["id"], {"error": "automation_failed"})
+                    self.repository.fail_run_request(owner, claimed["id"], {"error": error_code})
 
     def _run_update(self, owner: int, claimed: dict, run_id: int) -> dict:
         payload = claimed.get("payload") or {"update_scope": "all"}
@@ -192,11 +201,9 @@ class AutomationRuntime:
         if job_id is None:
             raise ValueError("email run requires a job")
         job = self.repository.get_automation_job(owner, job_id)
-        smtp = self.repository.get_user_smtp(owner)
         if not job or job["kind"] != "email":
             raise LookupError("email job not found")
-        if not smtp or not smtp.get("credential_ref"):
-            raise RuntimeError("personal SMTP is not configured")
+        smtp = self.repository.resolve_automation_smtp(owner)
         recipients = job.get("recipients") or []
         if not recipients:
             raise RuntimeError("email recipients are not configured")
@@ -232,9 +239,16 @@ class AutomationRuntime:
         )
         try:
             self._send_digest(smtp, recipients, items, new_items, raw_ack, message_id)
-        except Exception:
+        except Exception as exc:
             self.repository.mark_email_delivery(owner, delivery_id, "failed")
-            raise
+            logger.error(
+                "email delivery failed owner=%s job=%s source=%s type=%s",
+                owner,
+                job_id,
+                smtp.get("smtp_source"),
+                type(exc).__name__,
+            )
+            raise RuntimeError("email_delivery_failed") from exc
         self.repository.mark_email_delivery(owner, delivery_id, "sent")
         with self.repository.connection(immediate=True) as conn:
             for item in items:

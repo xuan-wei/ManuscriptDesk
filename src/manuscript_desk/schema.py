@@ -23,6 +23,7 @@ CREATE TABLE users (
     is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1)),
     email_verified_at TEXT,
     timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+    smtp_source TEXT NOT NULL DEFAULT 'personal' CHECK(smtp_source IN ('personal','system')),
     disabled_at TEXT,
     purge_eligible_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -240,6 +241,11 @@ CREATE TABLE system_smtp_config (
     sender_address TEXT NOT NULL,
     sender_name TEXT NOT NULL DEFAULT '',
     credential_ref TEXT,
+    config_generation INTEGER NOT NULL DEFAULT 1 CHECK(config_generation > 0),
+    last_test_status TEXT CHECK(last_test_status IN ('success','failed') OR last_test_status IS NULL),
+    last_tested_generation INTEGER,
+    last_tested_at TEXT,
+    last_test_error_code TEXT,
     updated_by_user_id INTEGER,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(updated_by_user_id) REFERENCES users(id)
@@ -368,7 +374,7 @@ CREATE TABLE automation_ack_tokens (
     FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 INSERT INTO app_schema(singleton, version, application_compatibility, migration_id)
-VALUES(1, 8, 'manuscript-desk-multitenant-v8', 'fresh');
+VALUES(1, 9, 'manuscript-desk-multitenant-v9', 'fresh');
 INSERT INTO app_settings(singleton, self_registration_enabled) VALUES(1, 0);
 """
 
@@ -600,6 +606,30 @@ def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
+    user_columns = {item["name"] for item in conn.execute("PRAGMA table_info(users)")}
+    if "smtp_source" not in user_columns:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN smtp_source TEXT NOT NULL DEFAULT 'personal' "
+            "CHECK(smtp_source IN ('personal','system'))"
+        )
+    smtp_columns = {item["name"] for item in conn.execute("PRAGMA table_info(system_smtp_config)")}
+    additions = {
+        "config_generation": "INTEGER NOT NULL DEFAULT 1 CHECK(config_generation > 0)",
+        "last_test_status": "TEXT CHECK(last_test_status IN ('success','failed') OR last_test_status IS NULL)",
+        "last_tested_generation": "INTEGER",
+        "last_tested_at": "TEXT",
+        "last_test_error_code": "TEXT",
+    }
+    for name, definition in additions.items():
+        if name not in smtp_columns:
+            conn.execute(f"ALTER TABLE system_smtp_config ADD COLUMN {name} {definition}")
+    conn.execute(
+        "UPDATE app_schema SET version=9,application_compatibility='manuscript-desk-multitenant-v9',"
+        "migration_id='v8-to-v9-smtp-sources',migrated_at=CURRENT_TIMESTAMP WHERE singleton=1"
+    )
+
+
 def migrate_database(db_path: str | Path) -> None:
     conn = connect(db_path)
     try:
@@ -629,6 +659,9 @@ def migrate_database(db_path: str | Path) -> None:
         if version == 7:
             _migrate_v7_to_v8(conn)
             version = 8
+        if version == 8:
+            _migrate_v8_to_v9(conn)
+            version = 9
         if version != APP_SCHEMA_VERSION:
             raise SchemaError(f"unsupported schema version: {version}")
         conn.commit()

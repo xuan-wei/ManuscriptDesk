@@ -351,6 +351,47 @@ def test_run_request_status_is_tenant_scoped(tmp_path):
     assert finished["summary"]["failed_journals"] == 1
 
 
+def test_smtp_source_and_system_health_are_safe_and_owner_scoped(tmp_path):
+    repo, _, alice, bob = setup(tmp_path)
+    assert repo.get_user_smtp_source(alice) == "personal"
+    assert repo.get_user_smtp_source(bob) == "personal"
+    assert repo.get_system_smtp_health()["health"] == "unconfigured"
+
+    config = repo.save_system_smtp(
+        alice,
+        {
+            "host": "smtp.system.test",
+            "port": 465,
+            "security_mode": "ssl",
+            "username": "system-user",
+            "sender_address": "system@example.test",
+            "sender_name": "System",
+            "credential_ref": "users/00000000-0000-0000-0000-000000000000/smtp/ref",
+        },
+    )
+    assert repo.get_system_smtp_health() == {
+        "configured": True,
+        "health": "untested",
+        "selectable": False,
+        "tested_at": None,
+        "message": "系统发送通道尚未由管理员测试",
+    }
+    with pytest.raises(Exception, match="system_smtp_unavailable"):
+        repo.set_user_smtp_source(alice, "system")
+
+    assert repo.record_system_smtp_test(config["config_generation"], "success")
+    repo.set_user_smtp_source(alice, "system")
+    assert repo.get_user_smtp_source(alice) == "system"
+    assert repo.get_user_smtp_source(bob) == "personal"
+    resolved = repo.resolve_automation_smtp(alice)
+    assert resolved["host"] == "smtp.system.test" and resolved["smtp_source"] == "system"
+
+    repo.save_system_smtp(alice, {**config, "sender_name": "Changed"})
+    assert repo.get_system_smtp_health()["health"] == "stale"
+    with pytest.raises(Exception, match="system_smtp_unavailable"):
+        repo.resolve_automation_smtp(alice)
+
+
 def test_smtp_config_is_owned(tmp_path):
     repo, _, alice, bob = setup(tmp_path)
     repo.save_user_smtp(

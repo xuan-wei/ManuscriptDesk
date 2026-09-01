@@ -384,6 +384,66 @@ def test_html_form_csrf_enforced(tmp_path):
     assert repo.get_user_by_email("alice@example.test")["display_name"] == "Alice New"
 
 
+def automation_csrf(client):
+    page = client.get("/automation")
+    assert page.status_code == 200
+    return re.search(r'name="automation-csrf" content="([^"]*)"', page.text).group(1)
+
+
+def test_automation_smtp_source_is_sanitized_and_csrf_protected(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    alice = add_user(repo, "alice@example.test")
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+    csrf = automation_csrf(client)
+
+    page = client.get("/automation")
+    assert page.text.count('<option value="') >= 24
+    assert 'value="Asia/Shanghai"' in page.text
+    assert 'name="smtp_source" value="system"' in page.text
+    assert 'name="smtp_source" value="personal"' in page.text
+
+    initial = client.get("/api/automation/smtp").json()
+    assert initial["source"] == "personal"
+    assert initial["system"]["health"] == "unconfigured"
+    assert set(initial["system"]) == {"configured", "health", "selectable", "tested_at", "message"}
+    assert not ({"host", "username", "sender_address", "credential_ref", "config_generation"} & set(initial["system"]))
+
+    no_csrf = client.put("/api/automation/smtp/source", json={"source": "personal"})
+    assert no_csrf.status_code == 403
+    unavailable = client.put(
+        "/api/automation/smtp/source",
+        json={"source": "system"},
+        headers={"X-Automation-CSRF": csrf},
+    )
+    assert unavailable.status_code == 409
+
+    config = repo.save_system_smtp(
+        alice,
+        {
+            "host": "smtp.system.test",
+            "port": 465,
+            "security_mode": "ssl",
+            "username": "private-user",
+            "sender_address": "private@example.test",
+            "credential_ref": "users/0/smtp/private-ref",
+        },
+    )
+    repo.record_system_smtp_test(config["config_generation"], "success")
+    switched = client.put(
+        "/api/automation/smtp/source",
+        json={"source": "system"},
+        headers={"X-Automation-CSRF": csrf},
+    )
+    assert switched.status_code == 200
+    projected = client.get("/api/automation/smtp")
+    assert projected.json()["source"] == "system"
+    assert "smtp.system.test" not in projected.text
+    assert "private-user" not in projected.text
+    assert "private@example.test" not in projected.text
+    assert "private-ref" not in projected.text
+
+
 def test_profile_uses_compact_timezones_and_preserves_uncommon_values(tmp_path):
     repo, _, _, app = build(tmp_path)
     add_user(repo, "alice@example.test")

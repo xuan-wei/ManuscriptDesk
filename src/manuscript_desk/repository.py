@@ -31,6 +31,13 @@ def _safe_tracking_error(value: object) -> str:
     return allowed.get(code, "tracking_failed") if code else ""
 
 
+class SmtpUnavailableError(RuntimeError):
+    def __init__(self, error_code: str, source: str):
+        super().__init__(error_code)
+        self.error_code = error_code
+        self.source = source
+
+
 class Repository:
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
@@ -1279,6 +1286,142 @@ class Repository:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM user_smtp_configs WHERE owner_user_id=?", (owner_user_id,)).fetchone()
             return dict(row) if row else None
+
+    def get_user_smtp_source(self, owner_user_id: int) -> str:
+        require_owner(owner_user_id)
+        with self.connection() as conn:
+            row = conn.execute("SELECT smtp_source FROM users WHERE id=?", (owner_user_id,)).fetchone()
+        if not row:
+            raise LookupError("user not found")
+        return str(row["smtp_source"])
+
+    def set_user_smtp_source(self, owner_user_id: int, source: str) -> None:
+        require_owner(owner_user_id)
+        if source not in {"personal", "system"}:
+            raise ValueError("invalid SMTP source")
+        if source == "system" and not self.get_system_smtp_health()["selectable"]:
+            raise SmtpUnavailableError("system_smtp_unavailable", "system")
+        with self.connection(immediate=True) as conn:
+            result = conn.execute(
+                "UPDATE users SET smtp_source=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (source, owner_user_id),
+            )
+            if result.rowcount != 1:
+                raise LookupError("user not found")
+
+    def get_system_smtp(self) -> dict | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM system_smtp_config WHERE singleton=1").fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def _system_smtp_health(config: dict | None) -> dict:
+        configured = bool(
+            config
+            and str(config.get("host") or "").strip()
+            and config.get("port")
+            and str(config.get("sender_address") or "").strip()
+            and config.get("credential_ref")
+        )
+        tested_at = config.get("last_tested_at") if config else None
+        if not configured:
+            health = "unconfigured"
+            message = "管理员尚未配置系统发送通道"
+        elif not config.get("last_test_status") or config.get("last_tested_generation") is None:
+            health = "untested"
+            message = "系统发送通道尚未由管理员测试"
+        elif int(config["last_tested_generation"]) != int(config["config_generation"]):
+            health = "stale"
+            message = "管理员已修改配置，需要重新测试"
+        elif config["last_test_status"] == "success":
+            health = "success"
+            message = "系统发送通道当前配置测试成功"
+        else:
+            health = "failed"
+            message = "系统发送通道当前配置测试失败"
+        return {
+            "configured": configured,
+            "health": health,
+            "selectable": health == "success",
+            "tested_at": tested_at,
+            "message": message,
+        }
+
+    def get_system_smtp_health(self) -> dict:
+        return self._system_smtp_health(self.get_system_smtp())
+
+    def save_system_smtp(self, actor_user_id: int, data: dict[str, Any]) -> dict:
+        require_owner(actor_user_id)
+        existing = self.get_system_smtp()
+        generation = int(existing.get("config_generation") or 1) + 1 if existing else 1
+        with self.connection(immediate=True) as conn:
+            conn.execute(
+                """INSERT INTO system_smtp_config(
+                       singleton,host,port,security_mode,username,sender_address,sender_name,credential_ref,
+                       config_generation,last_test_status,last_tested_generation,last_tested_at,last_test_error_code,
+                       updated_by_user_id)
+                   VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(singleton) DO UPDATE SET
+                       host=excluded.host,port=excluded.port,security_mode=excluded.security_mode,
+                       username=excluded.username,sender_address=excluded.sender_address,
+                       sender_name=excluded.sender_name,credential_ref=excluded.credential_ref,
+                       config_generation=excluded.config_generation,
+                       updated_by_user_id=excluded.updated_by_user_id,updated_at=CURRENT_TIMESTAMP""",
+                (
+                    data["host"],
+                    int(data["port"]),
+                    data["security_mode"],
+                    data.get("username", ""),
+                    data["sender_address"],
+                    data.get("sender_name", ""),
+                    data.get("credential_ref"),
+                    generation,
+                    existing.get("last_test_status") if existing else None,
+                    existing.get("last_tested_generation") if existing else None,
+                    existing.get("last_tested_at") if existing else None,
+                    existing.get("last_test_error_code") if existing else None,
+                    actor_user_id,
+                ),
+            )
+        return self.get_system_smtp()
+
+    def record_system_smtp_test(
+        self,
+        generation: int,
+        status: str,
+        safe_error_code: str | None = None,
+    ) -> bool:
+        if status not in {"success", "failed"}:
+            raise ValueError("invalid SMTP test status")
+        with self.connection(immediate=True) as conn:
+            current = conn.execute(
+                "SELECT config_generation,last_tested_generation FROM system_smtp_config WHERE singleton=1"
+            ).fetchone()
+            if not current:
+                return False
+            previous = current["last_tested_generation"]
+            if previous is not None and int(previous) > int(generation):
+                return False
+            result = conn.execute(
+                """UPDATE system_smtp_config SET last_test_status=?,last_tested_generation=?,
+                       last_tested_at=CURRENT_TIMESTAMP,last_test_error_code=? WHERE singleton=1""",
+                (status, int(generation), safe_error_code if status == "failed" else None),
+            )
+            return result.rowcount == 1
+
+    def resolve_automation_smtp(self, owner_user_id: int) -> dict:
+        source = self.get_user_smtp_source(owner_user_id)
+        if source == "personal":
+            config = self.get_user_smtp(owner_user_id)
+            if not config or not config.get("credential_ref"):
+                raise SmtpUnavailableError("personal_smtp_unavailable", "personal")
+        else:
+            config = self.get_system_smtp()
+            if not self._system_smtp_health(config)["selectable"]:
+                raise SmtpUnavailableError("system_smtp_unavailable", "system")
+        resolved = dict(config)
+        resolved["smtp_source"] = source
+        return resolved
 
     def _normalize_run_payload(self, owner_user_id: int, kind: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         if kind == "email":

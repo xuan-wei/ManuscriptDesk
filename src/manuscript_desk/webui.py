@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,20 @@ ANON_CSRF_COOKIE = "anon_csrf"
 PENDING_EMAIL_COOKIE = "pending_email_change"
 SYSTEM_SECRET_UUID = "0"  # SecretStore accepts hex/dash identifiers; system scope uses "0".
 TOKEN_SCOPES = {"starred:read", "starred:update", "working:read", "working:update"}
+logger = logging.getLogger(__name__)
+
+
+def _smtp_test_error_code(exc: Exception) -> str:
+    name = type(exc).__name__.casefold()
+    if "auth" in name:
+        return "smtp_authentication_failed"
+    if "ssl" in name or "tls" in name:
+        return "smtp_tls_failed"
+    if "connect" in name or "timeout" in name or "gaierror" in name:
+        return "smtp_connection_failed"
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        return "smtp_secret_unavailable"
+    return "smtp_delivery_failed"
 
 
 def normalize_shortcut_base_url(value: object) -> str:
@@ -1222,11 +1237,11 @@ def install_ui(
     def admin_settings_context() -> dict:
         with repository.connection() as conn:
             settings = dict(conn.execute("SELECT * FROM app_settings WHERE singleton=1").fetchone())
-            row = conn.execute("SELECT * FROM system_smtp_config WHERE singleton=1").fetchone()
-        system_smtp = dict(row) if row else None
+        system_smtp = repository.get_system_smtp()
         return {
             "settings": settings,
             "system_smtp": system_smtp,
+            "system_smtp_health": repository.get_system_smtp_health(),
             "smtp_password_configured": bool(system_smtp and system_smtp.get("credential_ref")),
             "pending_admin_email": "",
         }
@@ -1346,34 +1361,43 @@ def install_ui(
             return render("admin_settings.html", request, session, error="首次配置必须填写 SMTP 密码。", **ctx)
         if password and secret_store is None:
             return render("admin_settings.html", request, session, error="密钥存储不可用，无法保存密码。", **ctx)
-        credential_ref = ctx["system_smtp"]["credential_ref"] if ctx["system_smtp"] else None
+        old_credential_ref = ctx["system_smtp"]["credential_ref"] if ctx["system_smtp"] else None
+        credential_ref = old_credential_ref
+        new_credential_ref = None
         if password:
-            credential_ref = secret_store.write(SYSTEM_SECRET_UUID, "smtp", password)
+            new_credential_ref = secret_store.write(SYSTEM_SECRET_UUID, "smtp", password)
+            credential_ref = new_credential_ref
         try:
             port = int(str(form.get("port") or "587"))
         except ValueError:
+            if new_credential_ref:
+                secret_store.delete(new_credential_ref)
             return render("admin_settings.html", request, session, error="端口无效。", **ctx)
         security_mode = str(form.get("security_mode") or "starttls")
         if security_mode not in {"starttls", "ssl"}:
             security_mode = "starttls"
-        with repository.connection() as conn:
-            conn.execute(
-                """INSERT INTO system_smtp_config(singleton,host,port,security_mode,username,sender_address,sender_name,credential_ref,updated_by_user_id)
-                   VALUES(1,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(singleton) DO UPDATE SET host=excluded.host,port=excluded.port,security_mode=excluded.security_mode,
-                   username=excluded.username,sender_address=excluded.sender_address,sender_name=excluded.sender_name,
-                   credential_ref=excluded.credential_ref,updated_by_user_id=excluded.updated_by_user_id,updated_at=CURRENT_TIMESTAMP""",
-                (
-                    str(form.get("host") or ""),
-                    port,
-                    security_mode,
-                    str(form.get("username") or ""),
-                    str(form.get("sender_address") or ""),
-                    str(form.get("sender_name") or "Manuscript Desk"),
-                    credential_ref,
-                    session["user_id"],
-                ),
+        try:
+            repository.save_system_smtp(
+                session["user_id"],
+                {
+                    "host": str(form.get("host") or "").strip(),
+                    "port": port,
+                    "security_mode": security_mode,
+                    "username": str(form.get("username") or "").strip(),
+                    "sender_address": str(form.get("sender_address") or "").strip(),
+                    "sender_name": str(form.get("sender_name") or "Manuscript Desk").strip(),
+                    "credential_ref": credential_ref,
+                },
             )
+        except Exception:
+            if new_credential_ref:
+                secret_store.delete(new_credential_ref)
+            raise
+        if new_credential_ref and old_credential_ref and old_credential_ref != new_credential_ref:
+            try:
+                secret_store.delete(old_credential_ref)
+            except Exception:
+                logger.warning("failed to remove replaced system SMTP secret")
         repository.audit("system_smtp_update", "success", actor_user_id=session["user_id"])
         return render("admin_settings.html", request, session, success="系统 SMTP 已保存。", **admin_settings_context())
 
@@ -1393,10 +1417,13 @@ def install_ui(
                 **admin_settings_context(),
             )
         user = repository.get_user(session["user_id"])
+        smtp = repository.get_system_smtp()
         try:
-            if account_mailer is None or not account_mailer.configured():
-                raise RuntimeError("系统 SMTP 未配置")
+            if account_mailer is None or not account_mailer.configured() or not smtp:
+                raise RuntimeError("system SMTP unavailable")
+            generation = int(smtp["config_generation"])
             account_mailer._send(user["email"], "Manuscript Desk · 测试邮件", "这是一封系统 SMTP 测试邮件。")
+            repository.record_system_smtp_test(generation, "success")
             return render(
                 "admin_settings.html",
                 request,
@@ -1405,8 +1432,16 @@ def install_ui(
                 **admin_settings_context(),
             )
         except Exception as exc:
+            error_code = _smtp_test_error_code(exc)
+            if smtp:
+                repository.record_system_smtp_test(int(smtp["config_generation"]), "failed", error_code)
+            logger.error("system SMTP test failed type=%s code=%s", type(exc).__name__, error_code)
             return render(
-                "admin_settings.html", request, session, error=f"测试邮件发送失败：{exc}", **admin_settings_context()
+                "admin_settings.html",
+                request,
+                session,
+                error="测试邮件发送失败，请检查当前配置后重试。",
+                **admin_settings_context(),
             )
 
     @app.get("/admin/audit", response_class=HTMLResponse)
@@ -1520,7 +1555,13 @@ def install_ui(
             return redirect("/login")
         if session["is_admin"]:
             return redirect("/admin/users")
-        return render("automation.html", request, session)
+        return render(
+            "automation.html",
+            request,
+            session,
+            timezone_choices=profile_timezone_choices(),
+            default_timezone=DEFAULT_TIMEZONE,
+        )
 
     # ===================================================================
     # Tenant manuscript JSON API (owner-scoped)
@@ -2158,15 +2199,44 @@ def install_ui(
             return error
         smtp = repository.get_user_smtp(session["user_id"]) or {}
         return {
-            "host": smtp.get("host", ""),
-            "port": smtp.get("port", 587),
-            "security_mode": smtp.get("security_mode", "starttls"),
-            "username": smtp.get("username", ""),
-            "sender_address": smtp.get("sender_address", ""),
-            "sender_name": smtp.get("sender_name", ""),
-            "connect_timeout_seconds": 20,
-            "password_configured": bool(smtp.get("credential_ref")),
+            "source": repository.get_user_smtp_source(session["user_id"]),
+            "personal": {
+                "host": smtp.get("host", ""),
+                "port": smtp.get("port", 587),
+                "security_mode": smtp.get("security_mode", "starttls"),
+                "username": smtp.get("username", ""),
+                "sender_address": smtp.get("sender_address", ""),
+                "sender_name": smtp.get("sender_name", ""),
+                "connect_timeout_seconds": 20,
+                "password_configured": bool(smtp.get("credential_ref")),
+                "readiness": "ready" if smtp.get("credential_ref") else "incomplete",
+            },
+            "system": repository.get_system_smtp_health(),
         }
+
+    @app.put("/api/automation/smtp/source")
+    async def api_put_smtp_source(request: Request):
+        session, error = api_guard(request, write=True)
+        if error:
+            return error
+        data = await request.json()
+        source = str(data.get("source") or "")
+        old_source = repository.get_user_smtp_source(session["user_id"])
+        try:
+            repository.set_user_smtp_source(session["user_id"], source)
+        except ValueError:
+            return JSONResponse({"detail": "发送通道无效"}, status_code=400)
+        except Exception as exc:
+            if getattr(exc, "error_code", "") == "system_smtp_unavailable":
+                return JSONResponse({"detail": "系统发送通道当前不可用，请等待管理员测试通过"}, status_code=409)
+            raise
+        repository.audit(
+            "automation_smtp_source_update",
+            "success",
+            actor_user_id=session["user_id"],
+            metadata={"old_source": old_source, "new_source": source},
+        )
+        return {"success": True, "source": source}
 
     @app.put("/api/automation/smtp")
     async def api_put_smtp(request: Request):
@@ -2212,10 +2282,20 @@ def install_ui(
         existing = repository.get_user_smtp(owner)
         if not existing:
             return JSONResponse({"detail": "请先保存 SMTP 基本设置"}, status_code=400)
+        old_credential_ref = existing.get("credential_ref")
         credential_ref = secret_store.write(str(owner), "smtp", password)
         merged = dict(existing)
         merged["credential_ref"] = credential_ref
-        repository.save_user_smtp(owner, merged)
+        try:
+            repository.save_user_smtp(owner, merged)
+        except Exception:
+            secret_store.delete(credential_ref)
+            raise
+        if old_credential_ref and old_credential_ref != credential_ref:
+            try:
+                secret_store.delete(old_credential_ref)
+            except Exception:
+                logger.warning("failed to remove replaced personal SMTP secret")
         return {"success": True}
 
     @app.post("/api/automation/smtp/test")
