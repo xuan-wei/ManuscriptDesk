@@ -11,8 +11,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -30,7 +30,7 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: docker build --pull --no-cache -t manuscript-desk:ci .
       - run: python scripts/init_deployment.py "$RUNNER_TEMP/manuscript-desk" --public-base-url http://127.0.0.1:8008 --admin-email admin@example.com
       - run: docker compose -f "$RUNNER_TEMP/manuscript-desk/compose.yml" config --quiet

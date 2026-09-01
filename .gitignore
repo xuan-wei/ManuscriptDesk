@@ -26,6 +26,7 @@ build/
 *.p12
 *.pfx
 credentials*
+!src/manuscript_desk/credentials.py
 secrets/
 secret-store/
 
