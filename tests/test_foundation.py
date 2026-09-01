@@ -242,7 +242,9 @@ def test_schema_v9_migrates_urls_and_compacts_run_history(tmp_path):
         assert_schema(conn)
         canonical = dict(conn.execute("SELECT * FROM journal_configs WHERE id=?", (config_id,)).fetchone())
         untouched = dict(conn.execute("SELECT * FROM journal_configs WHERE id=?", (untouched_id,)).fetchone())
-        summaries = [json.loads(row[0]) for row in conn.execute("SELECT summary_json FROM automation_job_runs ORDER BY id")]
+        summaries = [
+            json.loads(row[0]) for row in conn.execute("SELECT summary_json FROM automation_job_runs ORDER BY id")
+        ]
         marker = conn.execute("SELECT migration_id FROM app_schema WHERE singleton=1").fetchone()[0]
     assert canonical["id"] == config_id
     assert canonical["journal_url"] == "https://mc.manuscriptcentral.com/Journal/Login?x=1"

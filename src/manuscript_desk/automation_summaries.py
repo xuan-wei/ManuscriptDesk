@@ -81,14 +81,28 @@ def project_automation_summary(
 ) -> dict[str, Any]:
     """Return the only automation-run summary shape allowed at rest or over APIs."""
     if not isinstance(value, Mapping):
-        return generic_historical_summary(status) if historical else {
-            "summary_version": SUMMARY_VERSION,
-            "result": _safe_result(None, status),
-        }
+        return (
+            generic_historical_summary(status)
+            if historical
+            else {
+                "summary_version": SUMMARY_VERSION,
+                "result": _safe_result(None, status),
+            }
+        )
 
     known_inputs = {
-        "summary_version", "result", "success", "error", "error_code", "historical", "message_code",
-        "update_scope", "reason", "failures", "journal_results", *_COUNT_FIELDS,
+        "summary_version",
+        "result",
+        "success",
+        "error",
+        "error_code",
+        "historical",
+        "message_code",
+        "update_scope",
+        "reason",
+        "failures",
+        "journal_results",
+        *_COUNT_FIELDS,
     }
     recognized = any(key in value for key in known_inputs)
     if historical and not recognized:

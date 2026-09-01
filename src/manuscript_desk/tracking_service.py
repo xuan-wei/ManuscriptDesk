@@ -138,9 +138,7 @@ class TrackingService:
         raise AssertionError("unreachable")
 
     @staticmethod
-    def _failed_result(
-        context: TenantRunContext, safe: Mapping, provider: str, exc: Exception, started: float
-    ) -> dict:
+    def _failed_result(context: TenantRunContext, safe: Mapping, provider: str, exc: Exception, started: float) -> dict:
         error_code = _tracking_error_code(exc)
         logger.error(
             "tenant %s journal %s tracking failed: type=%s code=%s",

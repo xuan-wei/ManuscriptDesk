@@ -665,9 +665,7 @@ def _canonicalize_legacy_scholarone_url(value: object) -> tuple[str, str] | None
 
 
 def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
-    configs = conn.execute(
-        "SELECT id,journal_url FROM journal_configs WHERE provider='scholarone'"
-    ).fetchall()
+    configs = conn.execute("SELECT id,journal_url FROM journal_configs WHERE provider='scholarone'").fetchall()
     for config in configs:
         canonical = _canonicalize_legacy_scholarone_url(config["journal_url"])
         if canonical:
