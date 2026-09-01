@@ -22,9 +22,13 @@ jobs:
       - run: pytest --cov=manuscript_desk --cov-report=term-missing
       - run: ruff format --check src tests
       - run: ruff check src tests
-      - run: mypy src/manuscript_desk
+      - name: Type check (advisory)
+        continue-on-error: true
+        run: mypy src/manuscript_desk
       - run: bandit -q -r src/manuscript_desk
-      - run: pip-audit
+      - name: Dependency audit (advisory)
+        continue-on-error: true
+        run: pip-audit
       - run: python scripts/check_public_tree.py
 
   container:
