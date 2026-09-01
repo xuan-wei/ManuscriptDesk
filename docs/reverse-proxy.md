@@ -1,10 +1,14 @@
-# Reverse proxy and TLS
+# 反向代理与 TLS
 
-Manuscript Desk binds to `127.0.0.1:8008` by default. Keep that binding and terminate HTTPS in a reverse proxy on the same host. Do not expose port 8008 directly to the internet.
+Manuscript Desk 默认监听 `127.0.0.1:8008`。建议保持此绑定，并在同一台主机上通过反向代理终止 HTTPS。不要把 8008 端口直接暴露到互联网。
 
-Set `MANUSCRIPT_DESK_PUBLIC_BASE_URL` to the exact external origin, without a path, for example `https://desk.example.com`. Production deployments must keep `MANUSCRIPT_DESK_COOKIE_SECURE=1`.
+将 `MANUSCRIPT_DESK_PUBLIC_BASE_URL` 设置为准确的外部 origin，不能包含路径，例如 `https://desk.example.com`。生产环境必须保持：
 
-## Nginx example
+```text
+MANUSCRIPT_DESK_COOKIE_SECURE=1
+```
+
+## Nginx 示例
 
 ```nginx
 server {
@@ -34,13 +38,21 @@ server {
 }
 ```
 
-The application trusts forwarded headers only from `127.0.0.1`, so keep the proxy on the same host unless you deliberately change and review that trust boundary.
+应用只信任来自 `127.0.0.1` 的转发请求头。因此，除非你明确修改并重新审查这条信任边界，否则反向代理应与应用运行在同一台主机上。
 
-## Verification
+## 检查反向代理
 
 ```bash
 curl --fail https://desk.example.com/api/health
 curl -I http://desk.example.com/
 ```
 
-Verify that HTTP redirects to HTTPS, the certificate is valid, authentication cookies carry `Secure`, and the backend port is not publicly reachable. User-configured Shortcut base URLs are display/link-generation settings only; they must not be treated as request-origin or callback trust.
+请确认：
+
+- HTTP 会重定向到 HTTPS；
+- TLS 证书有效且证书链完整；
+- 身份验证 Cookie 带有 `Secure` 属性；
+- 后端 8008 端口无法从公网直接访问；
+- 代理传入的 `Host` 和 `X-Forwarded-Proto` 与实际外部地址一致。
+
+用户在快捷指令页面配置的基础网址只用于显示和生成链接。系统不得把该网址用于请求 origin 验证、回调信任、Provider 访问、邀请邮件来源或其他服务端出站请求。

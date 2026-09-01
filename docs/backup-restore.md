@@ -1,16 +1,16 @@
-# Backup and restore
+# 备份与恢复
 
-A Manuscript Desk state set consists of the SQLite database and the matching dynamic SecretStore. Back up and restore them together. Long-term application keys are deployment configuration and must also be retained securely, but they are intentionally outside the dynamic SecretStore backup produced by this script.
+一套完整的 Manuscript Desk 运行状态由 SQLite 数据库和与之匹配的动态 SecretStore 组成。两者必须一起备份、一起恢复。长期应用密钥也必须单独安全保管，但它们属于部署配置，因此不会包含在本脚本生成的动态 SecretStore 备份中。
 
-Never copy a live SQLite database file directly. SQLite may be using WAL mode; use the provided online-backup script.
+不要直接复制正在运行的 SQLite `.db` 文件。SQLite 可能处于 WAL 模式，直接复制可能得到不一致的数据库；请使用项目提供的在线备份脚本。
 
-## Create a backup
+## 创建备份
 
 ```bash
 cd /srv/manuscript-desk
 docker compose stop manuscript-desk
 docker run --rm \
-  --user "$(id -u):$(id -g)" \
+  --user "10001:10001" \
   -v /srv/manuscript-desk/data/runtime:/runtime \
   -v /srv/manuscript-desk/data/secrets/data:/secrets:ro \
   -v /srv/manuscript-desk/backups:/backups \
@@ -23,26 +23,40 @@ docker run --rm \
 docker compose up -d
 ```
 
-The backup script uses SQLite's online backup API, so a running service is safe; the documented stop makes the state set quieter and simplifies an immediately consistent operational snapshot. The helper container runs as UID/GID 10001 and can read the private state without broadening host permissions.
+备份脚本使用 SQLite 在线备份 API，因此技术上可以在服务运行时安全备份；上述流程仍建议先停止应用，以减少状态变化，并获得更容易理解的即时一致运维快照。
 
-The script:
+辅助容器应使用能够读取私有状态的 UID/GID（标准部署中为 `10001:10001`）。如果宿主机当前用户无法读取这些目录，请不要放宽文件权限；应改用受控的辅助容器，以正确 UID/GID 执行备份。
 
-- uses SQLite's online backup API;
-- verifies `integrity_check` and foreign keys;
-- rejects SecretStore symlinks, unsupported file types, and broadly readable secret files;
-- writes SHA-256 values and schema metadata to a private manifest.
+备份脚本会：
 
-Separately back up `/srv/manuscript-desk/data/secrets/keys` using an encrypted, access-controlled system. Do not put keys or backups in Git.
+- 使用 SQLite 在线备份 API；
+- 执行 `integrity_check` 和外键检查；
+- 拒绝 SecretStore 中的符号链接、不支持的文件类型，以及权限过宽的秘密文件；
+- 在私有 manifest 中记录 SHA-256、Schema 信息和秘密文件清单。
 
-## Restore rehearsal
+还应使用加密且访问受控的系统，单独备份：
 
-1. Stop any service that would write to the restore destination.
-2. Create a new, empty private deployment directory on a separate localhost port.
-3. Copy `manuscripts.db` from one backup directory into its `data/runtime/` directory.
-4. Copy that same backup directory's `secrets/` tree into `data/secrets/data/`.
-5. Install the matching long-term keys for that state set.
-6. Set ownership to `10001:10001`, directories to `0700`, and private files to `0600`.
-7. Keep `MANUSCRIPT_DESK_CREATE_EMPTY_DB=0`.
-8. Start the restored service and verify health, login, records, and secret-backed configuration.
+```text
+/srv/manuscript-desk/data/secrets/keys
+```
 
-Do not combine a database from one backup with SecretStore data from another. Do not start an older application image against a database that has already migrated to a newer schema.
+不要把长期密钥、数据库、SecretStore 或任何备份加入 Git。
+
+## 恢复演练
+
+1. 停止所有可能写入恢复目标的服务。
+2. 在另一个仅本机监听的端口上创建全新、空白且私有的部署目录。
+3. 把同一个备份目录中的 `manuscripts.db` 复制到目标的 `data/runtime/`。
+4. 把该备份目录中的 `secrets/` 树复制到目标的 `data/secrets/data/`。
+5. 安装与该状态集匹配的长期密钥。
+6. 将所有权设置为 `10001:10001`，目录权限设置为 `0700`，私有文件权限设置为 `0600`。
+7. 保持 `MANUSCRIPT_DESK_CREATE_EMPTY_DB=0`。
+8. 启动恢复服务，检查健康状态、登录、稿件记录和依赖 SecretStore 的配置。
+
+## 恢复原则
+
+- 不要把一次备份的数据库与另一次备份的 SecretStore 混用。
+- 不要只恢复数据库而遗漏 SecretStore 或长期密钥。
+- 不要让旧版本应用读取已经迁移到更新 Schema 的数据库。
+- 正式恢复前应保留故障状态副本，以便后续诊断。
+- 恢复成功后，应再次执行数据库完整性和外键检查，并验证至少一个依赖秘密配置的受控操作。

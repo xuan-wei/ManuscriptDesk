@@ -1,18 +1,19 @@
-# Upgrading
+# 版本升级
 
-Treat every upgrade as an application image plus schema transition. Read `CHANGELOG.md` and the release notes before proceeding.
+每次升级都应视为“应用镜像升级 + 数据库 Schema 迁移”。开始前请阅读 `CHANGELOG.md` 和目标版本的发布说明。
 
-## Before upgrading
+## 升级前
 
-1. Confirm the target release supports the current database schema.
-2. Build or pull the target image without changing the running service.
-3. Create a paired database and SecretStore backup; retain the current long-term keys and Compose configuration.
-4. Rehearse the upgrade on a restored copy when the release changes schema.
-5. Confirm only one scheduler will run against the state set.
+1. 确认目标版本支持当前数据库 Schema。
+2. 在不修改正在运行服务的情况下构建或拉取目标镜像。
+3. 创建 SQLite 数据库与 SecretStore 的配对备份，并保留当前长期密钥和 Compose 配置。
+4. 如果目标版本会改变 Schema，先在恢复副本上演练升级。
+5. 确认同一套状态数据始终只有一个调度器运行。
+6. 预留维护窗口；迁移期间不要接收新的写入请求。
 
-## Upgrade
+## 执行升级
 
-From the private deployment directory:
+在私有部署目录中运行：
 
 ```bash
 docker compose build --pull
@@ -21,22 +22,42 @@ docker compose ps
 curl --fail http://127.0.0.1:8008/api/health
 ```
 
-Application startup performs supported forward migrations. Do not interrupt a migration. After startup, verify health, login, core manuscript views, journal configuration, Shortcut links, and automation configuration before admitting normal traffic.
+应用启动时会执行受支持的向前迁移。不要中断迁移过程。启动后，在恢复正常流量前检查：
 
-## Version 0.1.0 schema note
+- 健康检查和 Schema 版本；
+- 登录与会话；
+- 核心稿件页面；
+- 期刊配置；
+- 快捷指令链接；
+- 自动化任务及任务时区；
+- 系统与个人 SMTP 状态；
+- 数据库 `integrity_check` 和外键检查。
 
-This release uses Schema v8 and can migrate a supported Schema v7 database forward. The v7-to-v8 migration adds automation claim fencing metadata and requeues stale claimed/running requests. Always rehearse against a WAL-consistent backup plus matching SecretStore.
+## Schema v9 说明
 
-The runtime currently uses a long automation lease while provider work executes. Claim-token fencing prevents stale workers from finishing a reclaimed run, but periodic heartbeat during a long provider execution remains future hardening. Keep `WEB_CONCURRENCY=1` and do not run concurrent production schedulers.
+当前版本使用 Schema v9，并支持将受支持的 Schema v8 数据库向前迁移。
 
-## Rollback
+v8→v9 迁移会：
 
-Schema migrations are not automatically reversible. Never start the old image against the newly migrated database. If rollback is necessary:
+- 为每位用户增加自动化邮件发送通道选择；
+- 将所有现有用户默认设置为 `personal`，从而保持原有个人 SMTP 行为；
+- 为系统 SMTP 增加配置 generation 和持久化测试状态；
+- 把升级前已有的系统 SMTP 视为“尚未测试”。
 
-1. Remove traffic from and stop the new service.
-2. Preserve its state for diagnosis.
-3. Restore the pre-upgrade database and matching SecretStore pair.
-4. Restore the matching long-term keys, old image, and old deployment configuration.
-5. Start the old service and verify health and login.
+升级后，账号邀请、邮箱验证和密码恢复等系统生命周期邮件仍可继续使用已配置的系统 SMTP。普通用户若要将自动化邮件切换到系统发送通道，管理员必须先对当前系统 SMTP 配置完成一次真实测试并成功。
 
-Any writes accepted after the upgrade will not exist in the pre-upgrade backup; plan a controlled maintenance window for schema-changing releases.
+管理员修改系统 SMTP 的主机、端口、安全模式、用户名、发件信息或密码后，之前的测试结果会变成“配置已变更，需要重新测试”。系统不会在系统 SMTP 不可用时静默回退到用户个人 SMTP。
+
+自动化运行仍使用较长租约覆盖 Provider 操作。Claim Token fencing 可阻止旧 Worker 完成已经被重新领取的任务，但长时间 Provider 执行过程中的周期性 heartbeat 仍属于后续加固事项。必须保持 `WEB_CONCURRENCY=1`，并且不要并行运行多个生产调度器。
+
+## 回滚
+
+Schema 迁移不会自动反向执行。绝对不要让旧镜像读取已经迁移的新数据库。如果必须回滚：
+
+1. 从反向代理移除流量并停止新服务。
+2. 保留升级后的状态副本用于诊断。
+3. 恢复升级前的数据库与匹配的 SecretStore 配对备份。
+4. 恢复匹配的长期密钥、旧镜像和旧部署配置。
+5. 启动旧服务，检查健康状态、Schema 和登录。
+
+升级后已经接受的新写入不会存在于升级前备份中，因此所有改变 Schema 的版本都应安排受控维护窗口。
