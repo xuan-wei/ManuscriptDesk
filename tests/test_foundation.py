@@ -538,6 +538,37 @@ def test_save_manuscript_persists_provider_metadata_and_recovers_current_version
     assert persisted["workflow_folder"] == "Submissions Being Processed"
 
 
+def test_first_submitted_date_uses_initial_version(tmp_path):
+    repo = make_repo(tmp_path)
+    owner = add_user(repo, "alice@example.test")
+    config = add_config(repo, owner, "Journal")
+    versions = [
+        (1, "REVPAPER", "01-Dec-2023"),
+        (2, "REVPAPER.R1", "29-Jul-2024"),
+        (3, "REVPAPER.R2", "01-Jul-2025"),
+    ]
+    for version_number, manuscript_id, submitted in versions:
+        repo.save_manuscript(
+            owner,
+            config,
+            {
+                "original_id": "REVPAPER",
+                "manuscript_id": manuscript_id,
+                "version_number": version_number,
+                "title": "Revised paper",
+                "status": "Accept" if version_number == 3 else "Revision",
+                "detailed_status": "Accept" if version_number == 3 else "Revision",
+                "submitted_date": submitted,
+            },
+        )
+
+    current = repo.latest_manuscripts(owner)[0]
+    # The card represents the latest revision (R2) but "首次提交" must be the
+    # initial submission, not the newest revision's submission date.
+    assert current["manuscript_id"] == "REVPAPER.R2"
+    assert current["submitted_date"] == "01-Dec-2023"
+
+
 def test_current_status_age_uses_current_version_occurrence_and_semantic_date(tmp_path):
     repo = make_repo(tmp_path)
     owner = add_user(repo, "alice@example.test")

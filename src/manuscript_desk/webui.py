@@ -101,6 +101,7 @@ def _now_iso() -> str:
 
 _UPDATE_MESSAGES = {
     "no_enabled_journals": "尚未启用期刊配置，请先在期刊配置页面添加或启用期刊。",
+    "no_enabled_journal": "该期刊当前未启用，请先在期刊配置页面启用后再更新。",
     "browser_start_failed": "自动化浏览器无法启动，请联系管理员检查运行环境。",
     "browser_tab_crashed": "期刊页面的浏览器会话崩溃，系统重试后仍未完成，请稍后再试。",
     "browser_timeout": "期刊页面响应超时，请稍后重试。",
@@ -302,11 +303,11 @@ def _is_nav_active(request: Request, target: str) -> bool:
     path = request.url.path
     view = request.query_params.get("view", "")
     if target == "manuscripts":
-        return path == "/" and view not in {"starred", "ongoing", "hidden"}
+        return path == "/" and view == "all"
     if target == "starred":
         return path == "/" and view == "starred"
     if target == "ongoing":
-        return path == "/" and view == "ongoing"
+        return path == "/" and view in {"", "ongoing"}
     if target == "hidden":
         return path == "/" and view == "hidden"
     return path == target
@@ -1496,7 +1497,7 @@ def install_ui(
         if session["is_admin"]:
             return redirect("/admin/users")
         owner = session["user_id"]
-        view = request.query_params.get("view", "")
+        view = request.query_params.get("view", "ongoing")
         projection_view = "hidden" if view == "hidden" else "visible"
         cards = repository.manuscript_cards(owner, view=projection_view)
         if view == "starred":
@@ -1534,7 +1535,7 @@ def install_ui(
             all_change_count=len(changed),
             journal_configs=journal_configs,
             scheduler_status=scheduler_status,
-            workspace_view=view or "all",
+            workspace_view=view,
             available_manuscripts=repository.ungrouped_manuscripts(owner),
             current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         )
@@ -1919,19 +1920,72 @@ def install_ui(
         if error:
             return error
         owner = session["user_id"]
-        if not repository.list_journal_configs(owner, enabled_only=True):
+        payload = None
+        raw_body = await request.body()
+        if raw_body.strip():
+            try:
+                payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                return JSONResponse({"detail": "更新请求格式无效"}, status_code=400)
+            if not isinstance(payload, dict):
+                return JSONResponse({"detail": "更新请求格式无效"}, status_code=400)
+        if payload is None:
+            if not repository.list_journal_configs(owner, enabled_only=True):
+                return JSONResponse(
+                    {
+                        "active": False,
+                        "phase": "failed",
+                        "outcome": "failed",
+                        "error_code": "no_enabled_journals",
+                        "message": _UPDATE_MESSAGES["no_enabled_journals"],
+                    },
+                    status_code=409,
+                )
+        else:
+            try:
+                normalized = repository._normalize_run_payload(owner, "update", payload)
+            except PermissionError:
+                return JSONResponse({"detail": "期刊配置不存在"}, status_code=404)
+            except ValueError:
+                return JSONResponse({"detail": "更新请求格式无效"}, status_code=400)
+            if normalized.get("update_scope") != "journal":
+                return JSONResponse({"detail": "更新请求格式无效"}, status_code=400)
+            enabled = repository.journal_configs_by_ids(owner, normalized["journal_config_ids"], enabled_only=True)
+            if not enabled:
+                return JSONResponse(
+                    {
+                        "active": False,
+                        "phase": "failed",
+                        "outcome": "failed",
+                        "error_code": "no_enabled_journal",
+                        "message": _UPDATE_MESSAGES["no_enabled_journal"],
+                    },
+                    status_code=409,
+                )
+            payload = normalized
+        scheduled_for = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        enqueue = repository.enqueue_run(
+            owner,
+            "update",
+            scheduled_for,
+            source="manual",
+            requested_by_user_id=owner,
+            payload=payload,
+        )
+        if not enqueue["created"] and enqueue.get("coverage") == "different":
+            active_id = enqueue["request"]["id"]
             return JSONResponse(
                 {
-                    "active": False,
-                    "phase": "failed",
-                    "outcome": "failed",
-                    "error_code": "no_enabled_journals",
-                    "message": _UPDATE_MESSAGES["no_enabled_journals"],
+                    "active": True,
+                    "phase": enqueue["request"]["status"],
+                    "outcome": None,
+                    "request_id": active_id,
+                    "error_code": "update_conflict",
+                    "message": "另一个不包含该期刊的更新正在进行，请等待完成后重试。",
+                    "created": False,
                 },
                 status_code=409,
             )
-        scheduled_for = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        enqueue = repository.enqueue_run(owner, "update", scheduled_for, source="manual", requested_by_user_id=owner)
         item = repository.get_run_request(owner, enqueue["request"]["id"])
         response = _update_status_view(item)
         response["created"] = enqueue["created"]

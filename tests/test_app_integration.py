@@ -6,6 +6,7 @@ tenant manuscript/config isolation through the session-authenticated APIs, form
 CSRF enforcement, and owner-scoped configuration.
 """
 
+import json
 import re
 import threading
 import time
@@ -677,11 +678,30 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
             "detailed_status": "Under Review",
         },
     )
+    repo.save_manuscript(
+        owner,
+        config_id,
+        {
+            "original_id": "INACTIVE",
+            "manuscript_id": "INACTIVE",
+            "title": "Inactive",
+            "status": "Reject",
+            "detailed_status": "Reject",
+        },
+    )
     client = TestClient(app)
     html_login(client, "alice@example.test")
     page = client.get("/")
+    assert "/?view=all" in page.text and ">全部稿件<" in page.text
     assert "/?view=ongoing" in page.text and ">进行中<" in page.text
     assert "/?view=hidden" in page.text and ">隐藏稿件<" in page.text
+    assert 'data-manuscript-id="ACTIVE"' in page.text
+    assert 'data-manuscript-id="INACTIVE"' not in page.text
+    assert 'href="/?view=ongoing" aria-current="page"' in page.text
+    all_manuscripts = client.get("/?view=all")
+    assert 'data-manuscript-id="ACTIVE"' in all_manuscripts.text
+    assert 'data-manuscript-id="INACTIVE"' in all_manuscripts.text
+    assert 'href="/?view=all" aria-current="page"' in all_manuscripts.text
     ongoing = client.get("/?view=ongoing")
     assert "Active" in ongoing.text
     assert "合并投稿历程" in page.text and 'id="journeyModal"' in page.text
@@ -706,6 +726,106 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
     )
 
 
+def test_manuscript_update_buttons_and_automation_tabs_are_accessible():
+    root = Path(__file__).parents[1]
+    manuscript_template = (root / "src/manuscript_desk/templates/index.html").read_text()
+    automation_template = (root / "src/manuscript_desk/templates/automation.html").read_text()
+    automation_script = (root / "src/manuscript_desk/static/automation.js").read_text()
+
+    assert manuscript_template.count("journal-update-btn") >= 2
+    assert "manualUpdate({{ manuscript.journal_config_id | tojson }}, this)" in manuscript_template
+    assert "manualUpdate({{ member.journal_config_id | tojson }}, this)" in manuscript_template
+    assert (
+        "JSON.stringify({update_scope: 'journal', journal_config_ids: [Number(journalConfigId)]})"
+        in manuscript_template
+    )
+    assert automation_template.index(">自动化设置</button>") < automation_template.index(">最新运行</button>")
+    assert automation_template.index(">最新运行</button>") < automation_template.index(">运行日志</button>")
+    assert 'id="tab-settings" type="button" role="tab" aria-selected="true"' in automation_template
+    assert 'id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0">' in automation_template
+    assert 'role="tablist"' in automation_template
+    assert automation_template.count('role="tabpanel"') == 3
+    for key in ("ArrowRight", "ArrowLeft", "Home", "End"):
+        assert key in automation_script
+    assert "const latestRun = runs.runs[0] || null;" in automation_script
+    assert "const history = runs.runs.slice(1);" in automation_script
+
+
+def test_automation_run_log_shows_safe_troubleshooting_detail():
+    root = Path(__file__).parents[1]
+    automation_script = (root / "src/manuscript_desk/static/automation.js").read_text()
+
+    # Source, scope, and per-failure diagnostics render as fixed Chinese labels.
+    assert "手动运行" in automation_script and "定时任务" in automation_script
+    assert "全部启用期刊" in automation_script
+    assert "diagnosticLabels" in automation_script
+    assert "provider_table_headers_changed" in automation_script
+    assert "稿件列表字段发生变化" in automation_script
+    # Duration is derived client-side and failures are surfaced, not hidden.
+    assert "function formatDuration" in automation_script
+    assert "function failureLines" in automation_script
+    assert "metaParts.push(`耗时 ${duration}`)" in automation_script
+    # Run rows never read a serialized summary blob.
+    assert "summary_json" not in automation_script
+
+
+def test_automation_runs_api_exposes_safe_troubleshooting_fields(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    owner = add_user(repo, "alice@example.test")
+    config_id = repo.create_journal_config(
+        owner,
+        {
+            "journal_name": "Layout Journal",
+            "journal_url": "https://example.test",
+            "username": "a",
+            "provider": "scholarone",
+        },
+    )
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    request = repo.enqueue_run(owner, "update", now.isoformat(), requested_by_user_id=owner)["request"]
+    claimed = repo.claim_next_run(owner, "worker", now=now)
+    run_id = repo.start_claimed_run(owner, claimed["id"], "worker")
+    repo.finish_run(
+        owner,
+        run_id,
+        "partial",
+        {
+            "result": "partial",
+            "update_scope": "all",
+            "attempted_journals": 1,
+            "successful_journals": 0,
+            "failed_journals": 1,
+            "journal_results": [
+                {
+                    "journal_config_id": config_id,
+                    "success": False,
+                    "error_code": "tracking_failed",
+                    "diagnostic_code": "provider_table_headers_changed",
+                }
+            ],
+        },
+    )
+
+    run = client.get("/api/automation/runs").json()["runs"][0]
+    assert run["source"] == "manual"
+    assert run["started_at"] and run["finished_at"]
+    assert run["summary"]["update_scope"] == "all"
+    failure = run["summary"]["failures"][0]
+    assert failure == {
+        "code": "tracking_failed",
+        "diagnostic_code": "provider_table_headers_changed",
+        "journal_name": "Layout Journal",
+    }
+    rendered = str(run)
+    assert "summary_json" not in rendered and "credential" not in rendered
+    assert "owner_user_id" not in rendered and f"'id': {request['id']}" not in rendered
+
+
 def test_manual_update_frontend_polls_and_reloads_each_request_once():
     template = (Path(__file__).parents[1] / "src/manuscript_desk/templates/index.html").read_text()
 
@@ -719,6 +839,8 @@ def test_manual_update_frontend_polls_and_reloads_each_request_once():
     assert "_watchedRequestId = null;\n                cancelPendingReload();" in template
     assert "if (renderUpdateStatus(s)) startPolling();" in template
     assert "watchActiveRequest(startResult.request_id);" in template
+    assert "if (startResult.active && startResult.request_id != null)" in template
+    assert "watchActiveRequest(startResult.request_id);\n                        startPolling();" in template
     assert "setUpdateBtn(true);\n            stopPolling();" in template
     assert "sessionGet(_reloadedRequestKey) === key" in template
     assert "sessionSet(_reloadedRequestKey, key);" in template
@@ -760,6 +882,54 @@ def test_manual_update_enqueue_and_status(tmp_path):
     assert second["request_id"] == first["request_id"]
     status = client.get("/api/update/status").json()
     assert status["active"] is True and status["phase"] == "queued"
+
+
+def test_manual_journal_update_is_scoped_and_tenant_safe(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    alice = add_user(repo, "alice@example.test")
+    bob = add_user(repo, "bob@example.test")
+    own = repo.create_journal_config(
+        alice,
+        {"journal_name": "Own", "journal_url": "https://example.test", "username": "alice", "provider": "scholarone"},
+    )
+    foreign = repo.create_journal_config(
+        bob,
+        {"journal_name": "Foreign", "journal_url": "https://example.test", "username": "bob", "provider": "scholarone"},
+    )
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+    headers = {"X-CSRF-Token": session_csrf(client)}
+
+    started = client.post(
+        "/api/update",
+        json={"update_scope": "journal", "journal_config_ids": [own]},
+        headers=headers,
+    )
+    assert started.status_code == 202
+    with repo.connection() as conn:
+        payload = json.loads(conn.execute("SELECT payload_json FROM automation_run_requests").fetchone()[0])
+    assert payload == {"update_scope": "journal", "journal_config_ids": [own]}
+
+    repo.finish_run(
+        alice,
+        repo.start_claimed_run(alice, repo.claim_next_run(alice, "worker")["id"], "worker"),
+        "success",
+    )
+    denied = client.post(
+        "/api/update",
+        json={"update_scope": "journal", "journal_config_ids": [foreign]},
+        headers=headers,
+    )
+    assert denied.status_code == 404 and denied.json()["detail"] == "期刊配置不存在"
+
+    for invalid_ids in ([{}], [own, "2"], [True]):
+        malformed = client.post(
+            "/api/update",
+            json={"update_scope": "journal", "journal_config_ids": invalid_ids},
+            headers=headers,
+        )
+        assert malformed.status_code == 400
+        assert malformed.json()["detail"] == "更新请求格式无效"
 
 
 def test_manual_update_without_enabled_journal_is_controlled(tmp_path):

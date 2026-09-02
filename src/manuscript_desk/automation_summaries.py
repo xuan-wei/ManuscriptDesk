@@ -8,8 +8,9 @@ MAX_FAILURES = 5
 MAX_JOURNAL_NAME_LENGTH = 100
 
 _RESULT_CODES = {"success", "partial", "no_changes", "failed", "running", "cancelled", "finished"}
-_UPDATE_SCOPES = {"all", "starred", "working"}
+_UPDATE_SCOPES = {"all", "journal", "starred", "working"}
 _REASON_CODES = {
+    "no_enabled_journal",
     "no_enabled_starred_journals",
     "no_enabled_working_journals",
     "no_enabled_journals",
@@ -30,6 +31,19 @@ _ERROR_CODES = {
     "tracking_failed",
     "unsafe_provider_redirect",
 }
+# Fixed, non-sensitive troubleshooting categories. Kept as a separate allowlist so
+# only known-safe diagnostic labels — never raw provider text — reach the browser.
+_DIAGNOSTIC_CODES = {
+    "provider_login_rejected",
+    "provider_login_response_timeout",
+    "provider_login_page_unavailable",
+    "provider_author_dashboard_unavailable",
+    "provider_author_menu_changed",
+    "provider_folder_structure_changed",
+    "provider_table_headers_changed",
+    "provider_row_data_incomplete",
+}
+
 _COUNT_FIELDS = (
     "total_manuscripts",
     "attempted_journals",
@@ -60,6 +74,11 @@ def _safe_result(value: object, status: str) -> str:
 def _safe_error(value: object) -> str | None:
     candidate = str(value or "").strip().casefold()
     return candidate if candidate in _ERROR_CODES else None
+
+
+def _safe_diagnostic(value: object) -> str | None:
+    candidate = str(value or "").strip().casefold()
+    return candidate if candidate in _DIAGNOSTIC_CODES else None
 
 
 def generic_historical_summary(status: str = "failed") -> dict[str, Any]:
@@ -158,6 +177,9 @@ def project_automation_summary(
             if not code:
                 code = "tracking_failed"
             failure: dict[str, str] = {"code": code}
+            diagnostic = _safe_diagnostic(entry.get("diagnostic_code"))
+            if diagnostic:
+                failure["diagnostic_code"] = diagnostic
             if name:
                 failure["journal_name"] = str(name).strip()[:MAX_JOURNAL_NAME_LENGTH]
             failures.append(failure)

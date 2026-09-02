@@ -16,17 +16,39 @@ class TrackingErrorCode(str, Enum):
     TRACKING_FAILED = "tracking_failed"
 
 
+# Fixed, non-sensitive troubleshooting categories. These never carry provider
+# markup, selector text, URLs, credentials, or exception detail; they only name
+# a stable failure shape so operators can tell availability, authentication, and
+# provider-layout regressions apart.
+class TrackingDiagnosticCode(str, Enum):
+    PROVIDER_LOGIN_REJECTED = "provider_login_rejected"
+    PROVIDER_LOGIN_RESPONSE_TIMEOUT = "provider_login_response_timeout"
+    PROVIDER_LOGIN_PAGE_UNAVAILABLE = "provider_login_page_unavailable"
+    PROVIDER_AUTHOR_DASHBOARD_UNAVAILABLE = "provider_author_dashboard_unavailable"
+    PROVIDER_AUTHOR_MENU_CHANGED = "provider_author_menu_changed"
+    PROVIDER_FOLDER_STRUCTURE_CHANGED = "provider_folder_structure_changed"
+    PROVIDER_TABLE_HEADERS_CHANGED = "provider_table_headers_changed"
+    PROVIDER_ROW_DATA_INCOMPLETE = "provider_row_data_incomplete"
+
+
 class SafeTrackingError(RuntimeError):
     """Tracking failure whose public representation is a fixed, non-sensitive code."""
 
     error_code: TrackingErrorCode = TrackingErrorCode.TRACKING_FAILED
 
-    def __init__(self) -> None:
+    def __init__(self, diagnostic_code: TrackingDiagnosticCode | str | None = None) -> None:
         super().__init__(self.error_code.value)
+        self.diagnostic_code = (
+            diagnostic_code.value if isinstance(diagnostic_code, TrackingDiagnosticCode) else (diagnostic_code or "")
+        )
 
 
 class BrowserTabCrashedError(SafeTrackingError):
     error_code = TrackingErrorCode.BROWSER_TAB_CRASHED
+
+
+class BrowserTimeoutError(SafeTrackingError):
+    error_code = TrackingErrorCode.BROWSER_TIMEOUT
 
 
 class CredentialsUnavailableError(SafeTrackingError):
@@ -39,6 +61,12 @@ class ProviderLoginError(SafeTrackingError):
 
 class ProviderUnavailableError(SafeTrackingError):
     error_code = TrackingErrorCode.PROVIDER_UNAVAILABLE
+
+
+class ProviderContractError(SafeTrackingError):
+    """Deterministic provider layout/data-contract regression; never retried."""
+
+    error_code = TrackingErrorCode.TRACKING_FAILED
 
 
 _BROWSER_CRASH_SIGNATURES = (
@@ -113,6 +141,7 @@ class JournalTrackResult:
     manuscripts: list[dict] = field(default_factory=list)
     error_code: str = ""
     error_message: str = ""
+    diagnostic_code: str = ""
     elapsed_seconds: float = 0.0
 
     @property
@@ -129,5 +158,6 @@ class JournalTrackResult:
             "manuscripts_found": self.manuscripts_found,
             "error_code": self.error_code,
             "error_message": self.error_message,
+            "diagnostic_code": self.diagnostic_code,
             "elapsed_seconds": self.elapsed_seconds,
         }

@@ -632,6 +632,7 @@
                                             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); openJourneyEditor({{ manuscript.journey_id }})">编辑历程</button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setJourneyHidden({{ manuscript.journey_id }}, {{ 'false' if manuscript.is_hidden else 'true' }})">{{ '恢复显示' if manuscript.is_hidden else '隐藏整个历程' }}</button>
                                             {% else %}
+                                            {% if manuscript.journal_config_id %}<button type="button" class="btn btn-sm btn-outline-primary journal-update-btn" aria-label="更新期刊 {{ manuscript.journal }}" onclick="event.stopPropagation(); manualUpdate({{ manuscript.journal_config_id | tojson }}, this)"><i class="fas fa-sync-alt"></i> 更新</button>{% endif %}
                                             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setManuscriptHidden('{{ manuscript.original_id }}', {{ 'false' if manuscript.is_hidden else 'true' }})">{{ '恢复显示' if manuscript.is_hidden else '隐藏' }}</button>
                                             {% endif %}
                                         </div>
@@ -645,6 +646,7 @@
                                             <div class="journey-member-order">{{ loop.index }}</div>
                                             <div class="journey-member-main"><strong>{{ member.title or member.manuscript_id }}</strong><small>{{ member.journal }} · {{ member.manuscript_id }} · {{ member.status }}{% if member.is_hidden %} · 已隐藏{% endif %}</small></div>
                                             <div class="journey-member-actions">
+                                              {% if member.journal_config_id %}<button type="button" class="btn btn-sm btn-outline-primary journal-update-btn" aria-label="更新期刊 {{ member.journal }}" onclick="event.stopPropagation(); manualUpdate({{ member.journal_config_id | tojson }}, this)"><i class="fas fa-sync-alt"></i> 更新</button>{% endif %}
                                               <button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); setManuscriptHidden('{{ member.original_id }}', {{ 'false' if member.is_hidden else 'true' }})">{{ '恢复' if member.is_hidden else '隐藏此投稿' }}</button>
                                               <button type="button" class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); unlinkJourneyMember({{ manuscript.journey_id }}, '{{ member.original_id }}')">解除</button>
                                             </div>
@@ -863,6 +865,7 @@
         let _reloadRequestId = null;
         let _watchedRequestId = null;
         let _statusRequestId = null;
+        let _initiatingUpdateButton = null;
         const _reloadedRequestKey = 'manuscriptDesk.update.reloadedRequestId';
         const _dismissedRequestPrefix = 'manuscriptDesk.update.dismissed.';
         const _btnOriginalHTML = '<i class="fas fa-sync-alt"></i> 手动更新';
@@ -925,14 +928,21 @@
 
         function setUpdateBtn(running, elapsed) {
             const btn = document.getElementById('updateBtn');
-            if (!btn) return;
-            if (running) {
-                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> 更新中... ${elapsed || ''}`;
-                btn.disabled = true;
-            } else {
-                btn.innerHTML = _btnOriginalHTML;
-                btn.disabled = false;
+            if (btn) {
+                if (running) {
+                    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> 更新中... ${elapsed || ''}`;
+                    btn.disabled = true;
+                } else {
+                    btn.innerHTML = _btnOriginalHTML;
+                    btn.disabled = false;
+                }
             }
+            document.querySelectorAll('.journal-update-btn').forEach(button => {
+                button.disabled = running;
+                if (running) button.setAttribute('aria-busy', 'true');
+                else button.removeAttribute('aria-busy');
+            });
+            if (!running) _initiatingUpdateButton = null;
         }
 
         function formatElapsed(seconds) {
@@ -1061,16 +1071,28 @@
         })();
 
         // 手动更新入口
-        async function manualUpdate() {
+        async function manualUpdate(journalConfigId = null, triggerButton = null) {
+            _initiatingUpdateButton = triggerButton;
             setUpdateBtn(true);
             stopPolling();
             try {
-                const startResp = await fetch('/api/update', { method: 'POST' });
+                const targeted = journalConfigId !== null;
+                const options = { method: 'POST' };
+                if (targeted) {
+                    options.headers = {'Content-Type': 'application/json'};
+                    options.body = JSON.stringify({update_scope: 'journal', journal_config_ids: [Number(journalConfigId)]});
+                }
+                const startResp = await fetch('/api/update', options);
                 let startResult = {};
                 try { startResult = await startResp.json(); } catch (_) {}
                 if (!startResp.ok) {
-                    showStatusBar('failure', startResult.message || '无法启动更新，请稍后重试。', null, startResult.request_id);
-                    setUpdateBtn(false);
+                    showStatusBar('failure', startResult.message || startResult.detail || '无法启动更新，请稍后重试。', null, startResult.request_id);
+                    if (startResult.active && startResult.request_id != null) {
+                        watchActiveRequest(startResult.request_id);
+                        startPolling();
+                    } else {
+                        setUpdateBtn(false);
+                    }
                     return;
                 }
                 watchActiveRequest(startResult.request_id);

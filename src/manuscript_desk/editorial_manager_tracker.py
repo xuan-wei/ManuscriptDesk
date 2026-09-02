@@ -8,13 +8,17 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from .browser_factory import create_chrome_driver
 from .provider_origins import SafeProviderNavigation
-from .tracking_models import ManuscriptSnapshot
+from .tracking_models import (
+    BrowserTimeoutError,
+    ManuscriptSnapshot,
+    ProviderContractError,
+    ProviderUnavailableError,
+    SafeTrackingError,
+    TrackingDiagnosticCode,
+    raise_if_browser_tab_crashed,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class EditorialManagerError(RuntimeError):
-    pass
 
 
 class EditorialManagerTracker:
@@ -129,8 +133,22 @@ class EditorialManagerTracker:
             stage = "confirm_author_menu"
             self.wait.until(lambda driver: "Author Main Menu" in driver.page_source)
             self.author_menu_url = self.driver.execute_script("return window.location.href")
+        except SafeTrackingError:
+            # Browser crash and unsafe-redirect failures are already typed and
+            # must keep their category; never downgrade them here.
+            raise
         except Exception as exc:
-            raise EditorialManagerError(f"login_not_confirmed:{stage}:{type(exc).__name__}") from exc
+            raise_if_browser_tab_crashed(exc)
+            # Only stable, non-sensitive categories cross this boundary; the
+            # dynamic stage and Selenium exception type stay in local logs.
+            logger.warning(
+                "editorial manager login not confirmed: stage=%s type=%s",
+                stage,
+                type(exc).__name__,
+            )
+            if isinstance(exc, TimeoutException):
+                raise BrowserTimeoutError(TrackingDiagnosticCode.PROVIDER_LOGIN_RESPONSE_TIMEOUT) from exc
+            raise ProviderUnavailableError(TrackingDiagnosticCode.PROVIDER_LOGIN_PAGE_UNAVAILABLE) from exc
 
     def _return_to_author_menu(self) -> None:
         # Keep navigation inside the authenticated content frame. Loading the
@@ -148,7 +166,7 @@ class EditorialManagerTracker:
             return
         links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='AuthorMainMenu.aspx'], a#MainMenu")
         if not links:
-            raise EditorialManagerError("author_menu_link_missing")
+            raise ProviderContractError(TrackingDiagnosticCode.PROVIDER_AUTHOR_MENU_CHANGED)
         self.driver.execute_script("arguments[0].click();", links[0])
         self.wait.until(lambda driver: "Author Main Menu" in driver.page_source)
 
@@ -166,7 +184,7 @@ class EditorialManagerTracker:
         )
         if matching_text:
             return None
-        raise EditorialManagerError(f"folder_missing:{label}")
+        raise ProviderContractError(TrackingDiagnosticCode.PROVIDER_FOLDER_STRUCTURE_CHANGED)
 
     def _set_page_size(self) -> None:
         for selector in ("select#size1", "select#size2"):
@@ -207,7 +225,7 @@ class EditorialManagerTracker:
         current_status = value("current_status")
         final_disposition = value("final_disposition")
         if not manuscript_id or not title or (not current_status and not final_disposition):
-            raise EditorialManagerError("row_missing_required_fields")
+            raise ProviderContractError(TrackingDiagnosticCode.PROVIDER_ROW_DATA_INCOMPLETE)
 
         source_original_id, version_number = cls.extract_identity(manuscript_id)
         category, detail = cls.normalize_status(current_status, final_disposition)
@@ -245,7 +263,7 @@ class EditorialManagerTracker:
         if "current_status" not in headers and "final_disposition" not in headers:
             missing.add("current_status_or_final_disposition")
         if missing:
-            raise EditorialManagerError(f"missing_headers:{','.join(sorted(missing))}")
+            raise ProviderContractError(TrackingDiagnosticCode.PROVIDER_TABLE_HEADERS_CHANGED)
 
         snapshots = []
         for row in table.find_elements(By.CSS_SELECTOR, "tr[id^='row']"):

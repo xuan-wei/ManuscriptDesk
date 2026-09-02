@@ -9,7 +9,14 @@ from manuscript_desk.repository import Repository
 from manuscript_desk.schema import create_database
 from manuscript_desk.secrets_store import SecretStore
 from manuscript_desk.security import hash_password
-from manuscript_desk.tracking_models import BrowserTabCrashedError, ProviderLoginError
+from manuscript_desk.tracking_models import (
+    BrowserTabCrashedError,
+    BrowserTimeoutError,
+    ProviderContractError,
+    ProviderLoginError,
+    ProviderUnavailableError,
+    TrackingDiagnosticCode,
+)
 from manuscript_desk.tracking_service import TenantRunContext, TrackingService
 
 
@@ -95,6 +102,160 @@ def test_tracking_retries_browser_crash_once_with_fresh_tracker(tmp_path):
     assert summary["result"] == "success"
     assert len(trackers) == 2 and all(tracker.closed for tracker in trackers)
     assert [row["original_id"] for row in repo.latest_manuscripts(alice)] == ["OK"]
+
+
+def test_tracking_retries_provider_unavailable_once_with_fresh_tracker(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config(repo, secrets, alice, "Slow Journal")
+    trackers = []
+
+    class TimeoutThenSucceed:
+        def __init__(self, should_fail):
+            self.should_fail = should_fail
+            self.closed = False
+
+        def fetch(self, cfg, credentials):
+            if self.should_fail:
+                raise ProviderUnavailableError()
+            return [{"original_id": "OK", "manuscript_id": "OK", "title": cfg["journal_name"]}]
+
+        def close(self):
+            self.closed = True
+
+    def factory(_provider, _headless):
+        tracker = TimeoutThenSucceed(not trackers)
+        trackers.append(tracker)
+        return tracker
+
+    summary = TrackingService(repo, secrets, provider_factory=factory).track_journals(TenantRunContext(alice, alice))
+
+    assert summary["result"] == "success"
+    assert len(trackers) == 2 and all(tracker.closed for tracker in trackers)
+    with repo.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM query_logs WHERE owner_user_id=?", (alice,)).fetchone()[0] == 1
+
+
+def test_tracking_does_not_retry_unclassified_failure(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config(repo, secrets, alice, "Broken Journal")
+    trackers = []
+
+    class DeterministicFailure:
+        def __init__(self):
+            self.closed = False
+
+        def fetch(self, _cfg, _credentials):
+            raise KeyError("unexpected response shape")
+
+        def close(self):
+            self.closed = True
+
+    def factory(_provider, _headless):
+        tracker = DeterministicFailure()
+        trackers.append(tracker)
+        return tracker
+
+    summary = TrackingService(repo, secrets, provider_factory=factory).track_journals(TenantRunContext(alice, alice))
+
+    assert summary["error"] == "tracking_failed"
+    assert len(trackers) == 1 and trackers[0].closed
+
+
+def test_tracking_retries_browser_timeout_once_with_fresh_tracker(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config(repo, secrets, alice, "Timeout Journal")
+    trackers = []
+
+    class TimeoutThenSucceed:
+        def __init__(self, should_fail):
+            self.should_fail = should_fail
+            self.closed = False
+
+        def fetch(self, cfg, credentials):
+            if self.should_fail:
+                raise BrowserTimeoutError(TrackingDiagnosticCode.PROVIDER_LOGIN_RESPONSE_TIMEOUT)
+            return [{"original_id": "OK", "manuscript_id": "OK", "title": cfg["journal_name"]}]
+
+        def close(self):
+            self.closed = True
+
+    def factory(_provider, _headless):
+        tracker = TimeoutThenSucceed(not trackers)
+        trackers.append(tracker)
+        return tracker
+
+    summary = TrackingService(repo, secrets, provider_factory=factory).track_journals(TenantRunContext(alice, alice))
+
+    assert summary["result"] == "success"
+    assert len(trackers) == 2 and all(tracker.closed for tracker in trackers)
+
+
+def test_tracking_contract_error_is_terminal_and_carries_diagnostic(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    config_id = config(repo, secrets, alice, "Layout Journal")
+    repo.save_manuscript(
+        alice,
+        config_id,
+        {"original_id": "OLD", "manuscript_id": "OLD", "title": "Existing", "status": "Under Review"},
+    )
+    trackers = []
+
+    class ContractFailure:
+        def __init__(self):
+            self.closed = False
+
+        def fetch(self, _cfg, _credentials):
+            raise ProviderContractError(TrackingDiagnosticCode.PROVIDER_TABLE_HEADERS_CHANGED)
+
+        def close(self):
+            self.closed = True
+
+    def factory(_provider, _headless):
+        tracker = ContractFailure()
+        trackers.append(tracker)
+        return tracker
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    request = repo.enqueue_run(alice, "update", now.isoformat(), requested_by_user_id=alice)["request"]
+    claimed = repo.claim_next_run(alice, "worker", now=now)
+    run_id = repo.start_claimed_run(alice, claimed["id"], "worker")
+    service = TrackingService(repo, secrets, provider_factory=factory)
+    summary = service.track_journals(TenantRunContext(alice, alice, claimed["id"], run_id))
+    repo.finish_run(alice, run_id, summary.get("result", "failed"), summary)
+
+    # Deterministic layout regressions are never retried.
+    assert len(trackers) == 1 and trackers[0].closed
+    assert summary["journal_results"][0]["error_code"] == "tracking_failed"
+    assert summary["journal_results"][0]["diagnostic_code"] == "provider_table_headers_changed"
+    # Prior snapshot is retained.
+    assert [row["original_id"] for row in repo.latest_manuscripts(alice)] == ["OLD"]
+
+    item = repo.get_run_request(alice, request["id"])
+    failure = item["summary"]["failures"][0]
+    assert failure == {
+        "code": "tracking_failed",
+        "diagnostic_code": "provider_table_headers_changed",
+        "journal_name": "Layout Journal",
+    }
+    rendered = json.dumps(item["summary"])
+    assert "missing_headers" not in rendered and "TimeoutException" not in rendered
+
+
+def test_editorial_manager_row_contract_error_is_safe():
+    from manuscript_desk.editorial_manager_tracker import EditorialManagerTracker
+
+    with pytest.raises(ProviderContractError) as excinfo:
+        EditorialManagerTracker.parse_row_values(
+            {"manuscript_id": 0},
+            [""],
+            "submissions_being_processed",
+            "Layout Journal",
+            7,
+            "sitekey",
+        )
+    assert excinfo.value.error_code.value == "tracking_failed"
+    assert excinfo.value.diagnostic_code == "provider_row_data_incomplete"
+    assert "Layout Journal" not in str(excinfo.value)
 
 
 def test_tracking_does_not_retry_auth_failure_or_persist_payload(tmp_path):
@@ -189,6 +350,65 @@ def test_starred_update_runs_only_persisted_target_journals(tmp_path):
     assert sorted(RecordingProvider.fetched) == [first, second]
     assert summary["attempted_journals"] == 2
     assert third not in RecordingProvider.fetched
+
+
+def test_journal_update_payload_and_coverage_are_tenant_scoped(tmp_path):
+    repo, _, alice, bob = setup(tmp_path)
+    first = config(repo, _, alice, "First")
+    second = config(repo, _, alice, "Second")
+    foreign = config(repo, _, bob, "Foreign")
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    request = repo.enqueue_run(
+        alice,
+        "update",
+        now,
+        requested_by_user_id=alice,
+        payload={"update_scope": "journal", "journal_config_ids": [first]},
+    )
+    assert request["request"]["payload"] == {"update_scope": "journal", "journal_config_ids": [first]}
+    same = repo.enqueue_run(
+        alice,
+        "update",
+        now,
+        requested_by_user_id=alice,
+        payload={"update_scope": "journal", "journal_config_ids": [first]},
+    )
+    different = repo.enqueue_run(
+        alice,
+        "update",
+        now,
+        requested_by_user_id=alice,
+        payload={"update_scope": "journal", "journal_config_ids": [second]},
+    )
+    assert same["coverage"] == "same"
+    assert different["coverage"] == "different"
+    with pytest.raises(ValueError):
+        repo._normalize_run_payload(alice, "update", {"update_scope": "journal", "journal_config_ids": []})
+    with pytest.raises(ValueError):
+        repo._normalize_run_payload(alice, "update", {"update_scope": "journal", "journal_config_ids": [first, second]})
+    with pytest.raises(PermissionError):
+        repo._normalize_run_payload(alice, "update", {"update_scope": "journal", "journal_config_ids": [foreign]})
+
+
+def test_runtime_executes_only_persisted_journal_target(tmp_path):
+    repo, secrets, alice, _ = setup(tmp_path)
+    first = config(repo, secrets, alice, "First")
+    second = config(repo, secrets, alice, "Second")
+    RecordingProvider.fetched = []
+    runtime = AutomationRuntime(repo, secrets, "https://desk.example.test")
+    runtime.tracking = TrackingService(repo, secrets, provider_factory=lambda provider, headless: RecordingProvider())
+
+    summary = runtime._run_update(
+        alice,
+        {"id": 43, "payload": {"update_scope": "journal", "journal_config_ids": [first]}},
+        101,
+    )
+
+    assert RecordingProvider.fetched == [first]
+    assert second not in RecordingProvider.fetched
+    assert summary["update_scope"] == "journal"
+    assert summary["requested_journals"] == 1
 
 
 def test_working_items_and_update_target_use_visible_ongoing_manuscripts(tmp_path):
@@ -442,9 +662,19 @@ def test_run_summary_is_compact_on_write_and_read(tmp_path):
             "failed_journals": 7,
             "results": {"Alice Journal": [{"title": "Secret title", "original_id": "SECRET-ID"}]},
             "journal_results": [
-                {"journal_config_id": own, "success": False, "error_code": "provider_login_failed"},
+                {
+                    "journal_config_id": own,
+                    "success": False,
+                    "error_code": "provider_login_failed",
+                    "diagnostic_code": "provider_login_rejected",
+                },
                 {"journal_config_id": foreign, "success": False, "error_code": "raw traceback"},
-                {"journal_config_id": own, "success": False, "error_code": "provider_unavailable"},
+                {
+                    "journal_config_id": own,
+                    "success": False,
+                    "error_code": "tracking_failed",
+                    "diagnostic_code": "missing_headers:Manuscript Number",
+                },
                 {"journal_config_id": own, "success": False, "error_code": "browser_timeout"},
                 {"journal_config_id": own, "success": False, "error_code": "unsafe_provider_redirect"},
                 {"journal_config_id": own, "success": False, "error_code": "credentials_unavailable"},
@@ -467,11 +697,18 @@ def test_run_summary_is_compact_on_write_and_read(tmp_path):
         "historical",
     }
     assert len(summary["failures"]) == 5
-    assert summary["failures"][0] == {"code": "provider_login_failed", "journal_name": "Alice Journal"}
+    assert summary["failures"][0] == {
+        "code": "provider_login_failed",
+        "diagnostic_code": "provider_login_rejected",
+        "journal_name": "Alice Journal",
+    }
     assert "journal_name" not in summary["failures"][1]
+    # A raw, non-allowlisted diagnostic string is dropped rather than exposed.
+    assert "diagnostic_code" not in summary["failures"][2]
     rendered = json.dumps(summary)
     assert "Secret title" not in rendered and "SECRET-ID" not in rendered
     assert "private.example" not in rendered and "Traceback" not in rendered and "raw traceback" not in rendered
+    assert "Manuscript Number" not in rendered
     with repo.connection() as conn:
         stored = conn.execute("SELECT summary_json FROM automation_job_runs WHERE id=?", (run_id,)).fetchone()[0]
     assert "Secret title" not in stored and "private.example" not in stored

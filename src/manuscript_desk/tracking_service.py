@@ -70,6 +70,12 @@ def _tracking_error_code(exc: Exception) -> str:
     return TrackingErrorCode.TRACKING_FAILED.value
 
 
+def _tracking_diagnostic_code(exc: Exception) -> str:
+    if isinstance(exc, SafeTrackingError):
+        return getattr(exc, "diagnostic_code", "") or ""
+    return ""
+
+
 def _configured_max_workers(value: int | None) -> int:
     if value is None:
         raw = os.environ.get("MANUSCRIPT_DESK_MAX_BROWSER_WORKERS", "2").strip()
@@ -106,6 +112,12 @@ class TrackingService:
         except Exception as exc:
             return self._failed_result(context, safe, provider, CredentialsUnavailableError(), started)
 
+        retryable_codes = {
+            TrackingErrorCode.BROWSER_START_FAILED.value,
+            TrackingErrorCode.BROWSER_TAB_CRASHED.value,
+            TrackingErrorCode.BROWSER_TIMEOUT.value,
+            TrackingErrorCode.PROVIDER_UNAVAILABLE.value,
+        }
         for attempt in range(2):
             tracker = None
             try:
@@ -121,11 +133,13 @@ class TrackingService:
                 ).to_dict()
             except Exception as exc:
                 error_code = _tracking_error_code(exc)
-                if error_code == TrackingErrorCode.BROWSER_TAB_CRASHED.value and attempt == 0:
+                if error_code in retryable_codes and attempt == 0:
                     logger.warning(
-                        "tenant %s journal %s browser crashed; retrying with a fresh session",
+                        "tenant %s journal %s attempt %s failed with %s; retrying with a fresh session",
                         context.owner_user_id,
                         safe.get("id"),
+                        attempt + 1,
+                        error_code,
                     )
                     continue
                 return self._failed_result(context, safe, provider, exc, started)
@@ -153,6 +167,7 @@ class TrackingService:
             safe.get("id"),
             False,
             error_code=error_code,
+            diagnostic_code=_tracking_diagnostic_code(exc),
             elapsed_seconds=time.monotonic() - started,
         ).to_dict()
 

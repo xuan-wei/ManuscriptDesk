@@ -37,7 +37,7 @@
       {% else %}
       <section class="app-nav-group" aria-labelledby="nav-manuscripts">
         <h2 id="nav-manuscripts">稿件</h2>
-        {{ nav_link(request, 'manuscripts', '/', '全部稿件', 'papers') }}
+        {{ nav_link(request, 'manuscripts', '/?view=all', '全部稿件', 'papers') }}
         {{ nav_link(request, 'ongoing', '/?view=ongoing', '进行中', 'clock') }}
         {{ nav_link(request, 'starred', '/?view=starred', '标星稿件', 'star') }}
         {{ nav_link(request, 'hidden', '/?view=hidden', '隐藏稿件', 'archive') }}

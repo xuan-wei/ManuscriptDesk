@@ -465,19 +465,18 @@ class Repository:
             rows = conn.execute(
                 """SELECT r.*,COALESCE(j.short_name,'') AS short_name,
                           COALESCE(
-                            NULLIF(r.submitted_date,''),
                             (
-                              SELECT NULLIF(submitted.submitted_date,'')
-                              FROM manuscript_records submitted
-                              WHERE submitted.owner_user_id=r.owner_user_id
-                                AND submitted.original_id=r.original_id
-                                AND submitted.version_number=r.version_number
-                                AND NULLIF(submitted.submitted_date,'') IS NOT NULL
-                              ORDER BY submitted.id DESC
+                              SELECT NULLIF(first_sub.submitted_date,'')
+                              FROM manuscript_records first_sub
+                              WHERE first_sub.owner_user_id=r.owner_user_id
+                                AND first_sub.original_id=r.original_id
+                                AND NULLIF(first_sub.submitted_date,'') IS NOT NULL
+                              ORDER BY first_sub.version_number ASC,first_sub.id ASC
                               LIMIT 1
                             ),
+                            NULLIF(r.submitted_date,''),
                             ''
-                          ) AS current_version_submitted_date,
+                          ) AS first_submitted_date,
                           (
                             SELECT COALESCE(
                                      NULLIF(h.decision_date,''),
@@ -528,7 +527,7 @@ class Repository:
             )
             items = [dict(row) for row in rows]
             for item in items:
-                item["submitted_date"] = item.pop("current_version_submitted_date", "")
+                item["submitted_date"] = item.pop("first_submitted_date", "")
             return items
 
     def latest_manuscripts(self, owner_user_id: int, *, visibility: str = "visible") -> list[dict]:
@@ -1439,14 +1438,18 @@ class Repository:
             if "journal_config_ids" in data:
                 raise ValueError("all-journal update cannot specify journal IDs")
             return {"update_scope": "all"}
-        if scope not in {"starred", "working"}:
+        if scope not in {"journal", "starred", "working"}:
             raise ValueError("invalid update scope")
         raw_ids = data.get("journal_config_ids")
         if not isinstance(raw_ids, list):
             raise ValueError(f"{scope} update requires journal IDs")
-        ids = sorted(set(raw_ids))
-        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in ids):
+        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in raw_ids):
             raise ValueError("journal config IDs must be positive integers")
+        ids = sorted(set(raw_ids))
+        if not ids:
+            raise ValueError(f"{scope} update requires journal IDs")
+        if scope == "journal" and len(ids) != 1:
+            raise ValueError("journal update requires exactly one journal ID")
         owned = {row["id"] for row in self.journal_configs_by_ids(owner_user_id, ids, enabled_only=False)}
         if owned != set(ids):
             raise PermissionError("journal configuration does not belong to tenant")
@@ -1470,8 +1473,13 @@ class Repository:
         active_scope = active.get("update_scope", "all")
         if requested_scope == active_scope == "all":
             return "same"
-        if requested_scope in {"starred", "working"} and active_scope == "all":
+        if requested_scope in {"journal", "starred", "working"} and active_scope == "all":
             return "superset"
+        if requested_scope == "journal" and active_scope in {"journal", "starred", "working"}:
+            requested_ids = set(requested.get("journal_config_ids") or [])
+            active_ids = set(active.get("journal_config_ids") or [])
+            if requested_ids and requested_ids <= active_ids:
+                return "same" if requested_scope == active_scope and requested_ids == active_ids else "superset"
         if (
             requested_scope == active_scope
             and requested_scope in {"starred", "working"}
@@ -1624,7 +1632,8 @@ class Repository:
         safe_limit = max(1, min(int(limit), 100))
         with self.connection() as conn:
             rows = conn.execute(
-                """SELECT COALESCE(j.kind,q.kind) AS kind,r.status,r.started_at,r.finished_at,
+                """SELECT r.id AS run_id,r.request_id,q.source,
+                          COALESCE(j.kind,q.kind) AS kind,r.status,r.started_at,r.finished_at,
                           r.summary_json,j.name AS job_name
                    FROM automation_job_runs r
                    LEFT JOIN automation_jobs j ON j.id=r.job_id AND j.owner_user_id=r.owner_user_id
@@ -1640,6 +1649,7 @@ class Repository:
                     raw = None
                 results.append(
                     {
+                        "source": row["source"],
                         "job_name": row["job_name"] or "手动",
                         "kind": row["kind"],
                         "started_at": row["started_at"],

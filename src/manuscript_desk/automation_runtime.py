@@ -163,7 +163,7 @@ class AutomationRuntime:
             summary = self.tracking.track_journals(TenantRunContext(owner, owner, claimed["id"], run_id), headless=True)
             summary["update_scope"] = "all"
             return summary
-        if update_scope not in {"starred", "working"}:
+        if update_scope not in {"journal", "starred", "working"}:
             raise ValueError("invalid update scope")
         requested_ids = payload.get("journal_config_ids")
         if not isinstance(requested_ids, list):
@@ -186,7 +186,7 @@ class AutomationRuntime:
                 "failed_journals": 0,
                 "results": {},
                 "journal_results": [],
-                "reason": f"no_enabled_{update_scope}_journals",
+                "reason": "no_enabled_journal" if update_scope == "journal" else f"no_enabled_{update_scope}_journals",
             }
         summary.update(
             {

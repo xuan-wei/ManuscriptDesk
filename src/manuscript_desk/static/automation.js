@@ -5,6 +5,35 @@ let refreshTimer = null;
 let loading = false;
 let smtpState = null;
 const watchedRequests = new Map();
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+
+function activateTab(tab, {focus = false} = {}) {
+  if (!tab) return;
+  tabs.forEach(item => {
+    const selected = item === tab;
+    item.classList.toggle('is-active', selected);
+    item.setAttribute('aria-selected', selected ? 'true' : 'false');
+    item.tabIndex = selected ? 0 : -1;
+    const panel = document.getElementById(item.getAttribute('aria-controls'));
+    if (panel) panel.hidden = !selected;
+  });
+  if (focus) tab.focus();
+}
+
+tabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', event => {
+    let target = null;
+    if (event.key === 'ArrowRight') target = tabs[(index + 1) % tabs.length];
+    if (event.key === 'ArrowLeft') target = tabs[(index - 1 + tabs.length) % tabs.length];
+    if (event.key === 'Home') target = tabs[0];
+    if (event.key === 'End') target = tabs[tabs.length - 1];
+    if (target) {
+      event.preventDefault();
+      activateTab(target, {focus: true});
+    }
+  });
+});
 
 const phaseLabels = {
   queued: '排队中',
@@ -15,9 +44,41 @@ const phaseLabels = {
   cancelled: '已取消',
 };
 const scopeLabels = {
+  journal: '单个期刊',
   starred: '标星',
   working: '进行中',
-  all: '全部',
+  all: '全部启用期刊',
+};
+const sourceLabels = {
+  manual: '手动运行',
+  schedule: '定时任务',
+  retry: '重试运行',
+};
+const errorLabels = {
+  browser_start_failed: '自动化浏览器无法启动',
+  browser_tab_crashed: '浏览器会话崩溃',
+  browser_timeout: '期刊页面响应超时',
+  credentials_unavailable: '缺少期刊登录凭据',
+  empty_result_anomaly: '期刊返回空结果，已保留上次数据',
+  provider_login_failed: '期刊系统登录失败',
+  provider_unavailable: '期刊网站暂时不可用',
+  unsafe_provider_redirect: '检测到异常跳转，已中止',
+  tracking_failed: '期刊页面处理失败',
+  automation_failed: '任务执行失败',
+  email_delivery_failed: '邮件发送失败',
+  personal_smtp_unavailable: '个人 SMTP 不可用',
+  system_smtp_unavailable: '系统发送通道不可用',
+  no_enabled_journals: '没有启用的期刊',
+};
+const diagnosticLabels = {
+  provider_login_rejected: '期刊系统拒绝登录，请检查账号密码',
+  provider_login_response_timeout: '登录后页面响应超时，已重试一次',
+  provider_login_page_unavailable: '登录页面暂时不可用，已重试一次',
+  provider_author_dashboard_unavailable: '作者工作台暂时不可用，已重试一次',
+  provider_author_menu_changed: '作者菜单结构发生变化',
+  provider_folder_structure_changed: '稿件文件夹结构发生变化',
+  provider_table_headers_changed: '稿件列表字段发生变化',
+  provider_row_data_incomplete: '稿件列表缺少必要字段',
 };
 const resultLabels = {
   success: '成功',
@@ -26,6 +87,40 @@ const resultLabels = {
   failed: '失败',
   running: '运行中',
 };
+
+function failureReason(failure) {
+  const diagnostic = failure && diagnosticLabels[failure.diagnostic_code];
+  if (diagnostic) return diagnostic;
+  const code = failure && errorLabels[failure.error_code || failure.code];
+  return code || '更新失败';
+}
+
+function failureLines(summary) {
+  const failures = Array.isArray(summary.failures) ? summary.failures : [];
+  return failures.map(item => {
+    const name = item.journal_name || '未命名期刊';
+    return `${name} — ${failureReason(item)}`;
+  });
+}
+
+function formatClock(value) {
+  if (!value) return '';
+  const date = new Date(String(value).replace(' ', 'T') + 'Z');
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatDuration(startedAt, finishedAt) {
+  if (!startedAt) return '';
+  const start = new Date(String(startedAt).replace(' ', 'T') + 'Z').getTime();
+  const end = finishedAt ? new Date(String(finishedAt).replace(' ', 'T') + 'Z').getTime() : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return '';
+  const seconds = Math.round((end - start) / 1000);
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
 
 function toast(message) {
   const element = $('#toast');
@@ -93,6 +188,7 @@ function summaryText(run) {
   const attempted = Number(summary.attempted_journals || 0);
   const successful = Number(summary.successful_journals || 0);
   const failed = Number(summary.failed_journals || 0);
+  if (summary.reason === 'no_enabled_journal') return '该期刊当前未启用';
   if (summary.reason === 'no_enabled_starred_journals') return '标星稿件所在期刊未启用';
   if (summary.reason === 'no_enabled_working_journals') return '进行中稿件所在期刊未启用';
   if (summary.result === 'success') return `更新完成：${successful}/${attempted} 个期刊成功`;
@@ -100,8 +196,7 @@ function summaryText(run) {
   if (summary.result === 'no_changes') return attempted ? `已检查 ${attempted} 个期刊，没有发现变化` : '没有发现变化';
   const failures = Array.isArray(summary.failures) ? summary.failures : [];
   if (failures.length) {
-    const journals = failures.map(item => item.journal_name).filter(Boolean);
-    return journals.length ? `更新失败：${journals.join('、')}` : `更新失败（${failures.length} 项）`;
+    return `更新失败（${failures.length} 项）`;
   }
   return summary.error_code ? '更新失败，请稍后重试' : '更新任务已结束';
 }
@@ -165,6 +260,31 @@ function renderSmtpState(smtp) {
   warning.textContent = warning.hidden ? '' : '系统发送通道当前不可用，邮件任务会被阻止。请等待管理员重新测试，或切换回个人 SMTP。';
 }
 
+function runRow(run) {
+  const summary = run.summary || {};
+  const label = resultLabels[run.status] || phaseLabels[run.status] || run.status;
+  const statusClass = run.status === 'success' ? 'success' : run.status === 'failed' ? 'failed' : run.status === 'partial' ? 'active' : '';
+  const metaParts = [];
+  if (run.source) metaParts.push(sourceLabels[run.source] || run.source);
+  if (run.kind !== 'email' && summary.update_scope) metaParts.push(scopeLabels[summary.update_scope] || summary.update_scope);
+  const startText = formatClock(run.started_at);
+  if (startText) metaParts.push(`开始 ${startText}`);
+  if (run.finished_at) {
+    const endText = formatClock(run.finished_at);
+    if (endText) metaParts.push(`结束 ${endText}`);
+  } else if (run.status === 'running') {
+    metaParts.push('运行中');
+  }
+  const duration = formatDuration(run.started_at, run.finished_at);
+  if (duration) metaParts.push(`耗时 ${duration}`);
+  const metaHtml = metaParts.length ? `<div class="run-meta">${esc(metaParts.join(' · '))}</div>` : '';
+  const lines = failureLines(summary);
+  const detailHtml = lines.length
+    ? `<ul class="run-failures">${lines.map(line => `<li>${esc(line)}</li>`).join('')}</ul>`
+    : '';
+  return `<tr><td class="run-task">${esc(run.job_name)}</td><td>${esc(run.kind === 'email' ? '邮件' : '更新')}</td><td class="run-start">${esc(formatClock(run.started_at) || run.started_at)}</td><td><span class="badge ${statusClass}">${esc(label)}</span></td><td class="run-summary"><span>${esc(summaryText(run))}</span>${metaHtml}${detailHtml}</td></tr>`;
+}
+
 async function load() {
   if (loading) return;
   loading = true;
@@ -185,12 +305,10 @@ async function load() {
     $('#update-jobs').innerHTML = updates.length ? updates.map(jobCard).join('') : '尚无更新任务';
     $('#email-jobs').innerHTML = emails.length ? emails.map(jobCard).join('') : '尚无邮件任务';
     renderSmtpState(smtp);
-    $('#run-history').innerHTML = runs.runs.length ? runs.runs.map(run => {
-      const summary = summaryText(run);
-      const label = resultLabels[run.status] || phaseLabels[run.status] || run.status;
-      const statusClass = run.status === 'success' ? 'success' : run.status === 'failed' ? 'failed' : run.status === 'partial' ? 'active' : '';
-      return `<tr><td class="run-task">${esc(run.job_name)}</td><td>${esc(run.kind === 'email' ? '邮件' : '更新')}</td><td class="run-start">${esc(run.started_at)}</td><td><span class="badge ${statusClass}">${esc(label)}</span></td><td class="run-summary"><span>${esc(summary)}</span></td></tr>`;
-    }).join('') : '<tr><td colspan="5">暂无记录</td></tr>';
+    const latestRun = runs.runs[0] || null;
+    const history = runs.runs.slice(1);
+    $('#latest-run').innerHTML = latestRun ? runRow(latestRun) : '<tr><td colspan="5">尚无运行记录</td></tr>';
+    $('#run-history').innerHTML = history.length ? history.map(runRow).join('') : '<tr><td colspan="5">暂无历史记录</td></tr>';
     for (const job of activeJobs) watchRequest(job.active_request.id, job.kind);
     scheduleRefresh(activeJobs.length > 0);
   } finally {
