@@ -20,6 +20,40 @@ Manuscript Desk 是一个自托管、多用户的期刊稿件管理面板，可�
 - 支持 Star、Update Star、Working 和 Update Working 快捷指令链接。
 - SQLite 数据库与 SecretStore 配对备份。
 
+## 界面预览
+
+以下截图均已对稿件标题、编号、登录账号等信息做脱敏处理，仅用于展示常见功能。
+
+### 稿件追踪（全部稿件）
+
+集中查看统计概览、按期刊/投稿系统/状态筛选，并展开卡片浏览完整投稿历程。
+
+![稿件追踪总览](docs/images/all-manuscripts.png)
+
+### 跨期刊投稿历程
+
+把同一篇论文在不同期刊、不同轮次的投稿手动合并为一条历程，逐条查看每次投稿的期刊与决策，并可单独更新某个期刊。
+
+![投稿历程](docs/images/submission-journey.png)
+
+### 论文状态时间轴
+
+按版本展示提交与决策节点，并计算各阶段耗时。
+
+![论文状态时间轴](docs/images/status-timeline.png)
+
+### 自动化工作流
+
+管理定时更新与邮件通知任务，查看最新运行与运行日志。
+
+![自动化工作流](docs/images/automation.png)
+
+### 期刊配置
+
+横向比较各期刊的投稿系统、登录账号、凭据配置和启用状态。
+
+![期刊配置](docs/images/journal-config.png)
+
 ## 使用 Docker 快速部署
 
 环境要求：
@@ -108,7 +142,7 @@ docker compose up -d
 - 真实的 `production.env`；
 - 期刊账号或密码；
 - Shortcut Token；
-- 浏览器配置文件、日志和截图；
+- 浏览器配置文件、运行日志，以及任何包含真实、未脱敏数据的截图；
 - 未公开稿件数据；
 - 生产备份。
 
