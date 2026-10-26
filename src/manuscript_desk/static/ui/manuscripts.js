@@ -48,7 +48,7 @@
       status: member.status || '',
       detail: member.detailed_status || '',
       title: `${member.title || ''} ${member.manuscript_id || ''} ${member.original_id || ''}`.toLowerCase(),
-      changed: !!member.unread,
+      changed: !!member.unread && !member.is_hidden,
       starred: !!member.starred,
       round: String(Math.max(0, Number(member.version_number) - 1 || 0)),
       editor: normalizeEditor(member.SE_or_DE || member.editor),
@@ -102,7 +102,7 @@
 
   function stageMatches(data, stage) {
     if (!stage) return true;
-    if (stage === 'ongoing') return data.status === 'Under Review' || data.status === 'Revision';
+    if (stage === 'ongoing') return data.status === 'Under Review' || data.status === 'Revision' || data.changed;
     if (stage === 'review') return data.status === 'Under Review';
     if (stage === 'revision') return data.status === 'Revision';
     if (stage === 'accept') return data.status === 'Accept';
@@ -162,7 +162,7 @@
     const state = currentState(options);
     const visible = [];
     cards().map(cardData).forEach(data => {
-      const candidates = state.filterScope === 'any' && data.members.length ? data.members : [data];
+      const candidates = state.filterScope === 'any' && data.members.length > 1 ? data.members : [data];
       const show = candidates.some(candidate => matches(candidate, state));
       data.card.hidden = !show;
       data.card.style.display = show ? 'block' : 'none';

@@ -330,7 +330,7 @@ def test_hidden_manuscripts_and_submission_journeys_persist(tmp_path):
     reordered = repo.replace_submission_journey_members(
         owner, journey["id"], ["THIRD", "SECOND", "FIRST"], journey["revision"]
     )
-    assert reordered["representative"]["original_id"] == "FIRST"
+    assert reordered["representative"]["original_id"] == "THIRD"
     repo.set_submission_journey_hidden(owner, journey["id"], True)
     assert repo.manuscript_cards(owner) == []
     assert repo.manuscript_cards(owner, view="hidden")[0]["journey_id"] == journey["id"]
@@ -369,7 +369,7 @@ def test_journey_lifecycle_conflicts_hidden_representative_and_auto_dissolve(tmp
     config_id = add_config(repo, owner, "Journal")
     ids = ["FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH"]
     statuses = ["Reject", "Reject", "Revision", "Under Review", "Accept"]
-    for original_id, status in zip(ids, statuses, strict=False):
+    for index, (original_id, status) in enumerate(zip(ids, statuses, strict=False)):
         repo.save_manuscript(
             owner,
             config_id,
@@ -377,6 +377,7 @@ def test_journey_lifecycle_conflicts_hidden_representative_and_auto_dissolve(tmp
                 "original_id": original_id,
                 "manuscript_id": original_id,
                 "title": f"{original_id} title",
+                "submitted_date": f"2026-01-{index + 1:02d}",
                 "status": status,
                 "detailed_status": status,
             },
@@ -393,7 +394,7 @@ def test_journey_lifecycle_conflicts_hidden_representative_and_auto_dissolve(tmp
     assert visible[0]["representative"]["is_hidden"] is True
 
     reordered = repo.replace_submission_journey_members(owner, journey["id"], list(reversed(ids)), journey["revision"])
-    assert reordered["representative"]["original_id"] == "FIRST"
+    assert reordered["representative"]["original_id"] == "FIFTH"
     with pytest.raises(RuntimeError):
         repo.replace_submission_journey_members(owner, journey["id"], ids, journey["revision"])
 
@@ -837,3 +838,145 @@ def test_otp_is_hmac_only_and_verifiable():
     assert code not in digest
     assert verify_otp(key, "alice@example.test", "register", code, digest)
     assert not verify_otp(key, "alice@example.test", "register", "000000" if code != "000000" else "999999", digest)
+
+
+def test_ongoing_cards_include_only_visible_unread_changes(tmp_path):
+    repo = make_repo(tmp_path)
+    owner = add_user(repo, "alice@example.test")
+    config_id = add_config(repo, owner, "Journal")
+    for original_id in ("EARLY", "LAST", "SINGLE"):
+        repo.save_manuscript(
+            owner,
+            config_id,
+            {
+                "original_id": original_id,
+                "manuscript_id": original_id,
+                "title": original_id,
+                "status": "Reject",
+                "detailed_status": "Reject",
+            },
+        )
+    # Existing NEW semantics also include never-acknowledged terminal records.
+    assert repo.statistics(owner)["ongoing"] == 3
+    journey = repo.create_submission_journey(owner, ["EARLY", "LAST"])
+    repo.acknowledge(owner, "LAST")
+    repo.acknowledge(owner, "SINGLE")
+    cards = repo.manuscript_cards(owner)
+    journey_card = next(card for card in cards if card["kind"] == "journey")
+    assert journey_card["representative"]["original_id"] == "LAST"
+    assert repo.is_ongoing_card(journey_card)
+    assert repo.statistics(owner)["ongoing"] == 1
+    counts = repo.manuscript_card_statistics(owner)
+    assert counts["ongoing_card_count"] == 1
+    assert counts["ongoing_submission_count"] == 0
+    repo.set_hidden(owner, "EARLY", True)
+    assert repo.statistics(owner)["ongoing"] == 0
+    assert repo.manuscript_card_statistics(owner)["ongoing_card_count"] == 0
+    repo.set_hidden(owner, "EARLY", False)
+    assert repo.statistics(owner)["ongoing"] == 1
+    repo.set_submission_journey_hidden(owner, journey["id"], True)
+    assert repo.statistics(owner)["ongoing"] == 0
+    repo.set_submission_journey_hidden(owner, journey["id"], False)
+    repo.acknowledge(owner, "EARLY")
+    assert repo.statistics(owner)["ongoing"] == 0
+    repo.save_manuscript(
+        owner,
+        config_id,
+        {
+            "original_id": "SINGLE",
+            "manuscript_id": "SINGLE",
+            "title": "SINGLE",
+            "recorded_at": "2026-01-03 00:00:00",
+            "status": "Revision",
+            "detailed_status": "Major Revision",
+        },
+    )
+    repo.acknowledge(owner, "SINGLE")
+    assert repo.statistics(owner)["ongoing"] == 1
+    assert repo.manuscript_card_statistics(owner)["ongoing_card_count"] == 1
+
+
+def test_journey_submission_dates_normalize_writes_and_refresh_projection(tmp_path):
+    repo = make_repo(tmp_path)
+    owner = add_user(repo, "chronology@example.test")
+    config_id = add_config(repo, owner, "Journal")
+    dates = {
+        "A": "01-Jan-2024",
+        "B": "February 02, 2024",
+        "C": "2024/03/03",
+        "D": "2024-04-04T02:00:00+02:00",
+        "E": "2024-05-05",
+        "OLDER": "01-Dec-23",
+        "UNKNOWN": "not a date",
+        "TIE": "2024-04-04T00:00:00Z",
+    }
+    for original_id, date in dates.items():
+        repo.save_manuscript(
+            owner,
+            config_id,
+            {
+                "original_id": original_id,
+                "manuscript_id": original_id,
+                "title": "Changed title" if original_id == "E" else original_id,
+                "submitted_date": date,
+                "status": "Reject",
+            },
+        )
+    journey = repo.create_submission_journey(owner, ["D", "B", "A", "C"])
+    assert [m["original_id"] for m in journey["members"]] == ["A", "B", "C", "D"]
+    appended = repo.replace_submission_journey_members(
+        owner, journey["id"], ["D", "B", "A", "C", "E"], journey["revision"]
+    )
+    assert [m["original_id"] for m in appended["members"]] == ["A", "B", "C", "D", "E"]
+    assert appended["representative"]["title"] == "Changed title"
+    updated = repo.replace_submission_journey_members(
+        owner, journey["id"], ["TIE", "E", "UNKNOWN", "D", "C", "B", "A", "OLDER"], appended["revision"]
+    )
+    expected = ["UNKNOWN", "OLDER", "A", "B", "C", "D", "TIE", "E"]
+    assert [m["original_id"] for m in updated["members"]] == expected
+    assert updated["members"][0]["submission_sort_date"] == ""
+    with repo.connection() as conn:
+        persisted = conn.execute(
+            "SELECT original_id FROM submission_journey_members WHERE journey_id=? ORDER BY position", (journey["id"],)
+        ).fetchall()
+        assert [row[0] for row in persisted] == expected
+        # Simulate an old manually ordered journey and a tracker date correction.
+        conn.execute("UPDATE submission_journey_members SET position=100-position WHERE journey_id=?", (journey["id"],))
+        conn.execute(
+            "UPDATE manuscript_records SET submitted_date='2025-01-01' WHERE owner_user_id=? AND original_id='A'",
+            (owner,),
+        )
+    refreshed = repo.submission_journey(owner, journey["id"])
+    assert refreshed["representative"]["original_id"] == "A"
+    assert refreshed["revision"] == updated["revision"]
+    assert [m["position"] for m in refreshed["members"]] == list(range(8))
+    repo.save_manuscript(
+        owner,
+        config_id,
+        {
+            "original_id": "A",
+            "manuscript_id": "A.R1",
+            "version_number": 2,
+            "submitted_date": "2030-01-01",
+            "title": "Revision",
+        },
+    )
+    assert repo.submission_journey(owner, journey["id"])["representative"]["submitted_date"] == "2025-01-01"
+
+
+def test_submission_date_parser_formats_unknowns_and_timezone_order():
+    from manuscript_desk.submission_dates import parse_submission_date, submission_order_key
+
+    assert parse_submission_date("4 Apr 2024") == parse_submission_date("Apr 04, 2024")
+    assert parse_submission_date("2024-04-04T02:00:00+02:00") == parse_submission_date("2024-04-04T00:00:00Z")
+    assert parse_submission_date("2024-02-31") is None
+    assert parse_submission_date(None) is None
+    assert parse_submission_date("0001-01-01T00:00:00+14:00") is None
+    assert parse_submission_date("9999-12-31T23:59:59-14:00") is None
+    rows = [{"original_id": "B", "submitted_date": ""}, {"original_id": "A", "submitted_date": "?"}]
+    assert [item["original_id"] for item in sorted(rows, key=submission_order_key)] == ["A", "B"]
+    rows = [
+        {"original_id": "A", "submitted_date": "2024-04-04T00:00:00.1Z"},
+        {"original_id": "B", "submitted_date": "2024-04-04T00:00:00Z"},
+    ]
+    assert [item["original_id"] for item in sorted(rows, key=submission_order_key)] == ["B", "A"]

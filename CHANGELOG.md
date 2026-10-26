@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Independent tenant submission-journey management with all-member search, add/edit/dissolve workflows and card deep links; replaces the manuscript-page merge modal.
+- Journey members automatically follow first-submission date (oldest to newest), with explicitly labeled unknown dates first and deterministic identifier ties; the latest known submission supplies representative content, without manual reorder controls.
 - Clean source-only repository boundary.
 - Installable `src/` package and supported module/console entrypoints.
 - MIT License and initial public documentation.
@@ -21,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Manuscript cards now show the initial submission date under “首次提交” instead of the latest revision's submission date for papers with multiple rounds.
 
 ### Changed
+
+- The ongoing manuscript view now includes cards with unacknowledged NEW statuses, including rejection/acceptance decisions, until acknowledged; hidden items and automation working scopes retain their existing behavior.
 
 - Retry explicitly recoverable journal tracking failures once with a fresh provider/browser session; authentication, credential, unsafe-navigation, and unclassified failures remain terminal.
 - Editorial Manager failures are now classified into stable, non-sensitive categories (availability, login rejection, page-structure change, data-shape change) at the provider boundary instead of collapsing to a single generic code.

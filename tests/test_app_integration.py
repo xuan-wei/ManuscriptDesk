@@ -689,6 +689,7 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
             "detailed_status": "Reject",
         },
     )
+    repo.acknowledge(owner, "INACTIVE")
     client = TestClient(app)
     html_login(client, "alice@example.test")
     page = client.get("/")
@@ -704,10 +705,9 @@ def test_manuscript_navigation_includes_ongoing_and_hidden(tmp_path):
     assert 'href="/?view=all" aria-current="page"' in all_manuscripts.text
     ongoing = client.get("/?view=ongoing")
     assert "Active" in ongoing.text
-    assert "合并投稿历程" in page.text and 'id="journeyModal"' in page.text
-    assert 'id="journeySearchInput"' in page.text
-    assert "搜索标题、期刊、稿件编号或状态" in page.text
-    assert "filterJourneyPicker" in page.text
+    assert 'href="/journeys"' in page.text
+    assert 'id="journeyModal"' not in page.text and 'id="createJourneyBtn"' not in page.text
+    assert "openJourneyEditor" not in page.text
     assert "隐藏这次投稿？以后仍会继续抓取" in page.text
     assert 'data-filter-scope="latest"' in page.text
     assert 'data-filter-scope="any"' in page.text
@@ -1420,3 +1420,128 @@ def test_legacy_json_token_api_is_not_exposed(tmp_path):
     assert client.get(f"/update_starred?api={raw}").status_code == 401
     assert client.get(f"/renew_starred?api={raw}").status_code == 401
     assert client.get(f"/starred?api={raw}").status_code == 401
+
+
+@pytest.mark.parametrize("decision", ["Reject", "Accept", "Reject and Resubmit"])
+def test_ongoing_retains_new_decisions_until_acknowledged(tmp_path, decision):
+    repo, _, _, app = build(tmp_path)
+    owner = add_user(repo, "alice@example.test")
+    add_user(repo, "bob@example.test")
+    config_id = repo.create_journal_config(
+        owner, {"journal_name": "Journal", "journal_url": "https://mc.manuscriptcentral.com/j", "username": "a"}
+    )
+    record = {
+        "original_id": "CHANGED",
+        "manuscript_id": "CHANGED",
+        "title": "Changed paper",
+        "recorded_at": "2026-01-01 00:00:00",
+        "status": "Under Review",
+        "detailed_status": "Under Review",
+    }
+    repo.save_manuscript(owner, config_id, record)
+    repo.acknowledge(owner, "CHANGED")
+    client = TestClient(app)
+    html_login(client, "alice@example.test")
+    csrf = session_csrf(client)
+    assert 'data-manuscript-id="CHANGED"' in client.get("/").text
+    repo.save_manuscript(
+        owner, config_id, dict(record, status=decision, detailed_status=decision, recorded_at="2026-01-02 00:00:00")
+    )
+    for path in ("/", "/?view=ongoing", "/?view=all"):
+        page = client.get(path)
+        assert 'data-manuscript-id="CHANGED"' in page.text
+        assert 'data-status-changed="true"' in page.text
+    assert repo.statistics(owner)["ongoing"] == 1
+    assert repo.working_update_target(owner)["journal_config_ids"] == []
+    bob_client = TestClient(app)
+    html_login(bob_client, "bob@example.test")
+    assert 'data-manuscript-id="CHANGED"' not in bob_client.get("/").text
+    assert bob_client.post(
+        "/api/manuscripts/CHANGED/acknowledge", headers={"X-CSRF-Token": session_csrf(bob_client)}
+    ).json() == {"success": False}
+    assert repo.statistics(owner)["ongoing"] == 1
+    assert client.post("/api/manuscripts/CHANGED/acknowledge").status_code == 403
+    response = client.post("/api/manuscripts/CHANGED/acknowledge", headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 200
+    assert 'data-manuscript-id="CHANGED"' not in client.get("/").text
+    assert 'data-manuscript-id="CHANGED"' in client.get("/?view=all").text
+    assert repo.statistics(owner)["ongoing"] == 0
+    repo.save_manuscript(
+        owner,
+        config_id,
+        dict(record, status=decision, detailed_status="New decision detail", recorded_at="2026-01-03 00:00:00"),
+    )
+    assert 'data-manuscript-id="CHANGED"' in client.get("/").text
+    repo.set_hidden(owner, "CHANGED", True)
+    assert 'data-manuscript-id="CHANGED"' not in client.get("/").text
+
+
+def test_journey_management_all_members_deep_links_and_append(tmp_path):
+    repo, _, _, app = build(tmp_path)
+    owner = add_user(repo, "manager@example.test")
+    add_user(repo, "other@example.test")
+    add_user(repo, "admin@example.test", admin=True)
+    config_id = repo.create_journal_config(
+        owner,
+        {"journal_name": "Synthetic Journal", "journal_url": "https://mc.manuscriptcentral.com/j", "username": "a"},
+    )
+    for index in range(1, 7):
+        repo.save_manuscript(
+            owner,
+            config_id,
+            {
+                "original_id": f"MS{index}",
+                "manuscript_id": f"MS{index}",
+                "title": "Old searchable title"
+                if index == 1
+                else "<script>alert(1)</script>"
+                if index == 5
+                else f"New title {index}",
+                "journal": "Synthetic Journal",
+                "submitted_date": f"2024-0{index}-01",
+                "status": "Accept",
+            },
+        )
+    journey = repo.create_submission_journey(owner, ["MS4", "MS3", "MS2", "MS1"])
+    repo.set_hidden(owner, "MS2", True)
+    repo.set_submission_journey_hidden(owner, journey["id"], True)
+    client = TestClient(app)
+    assert client.get("/journeys", follow_redirects=False).headers["location"] == "/login"
+    html_login(client, "manager@example.test")
+    csrf = session_csrf(client)
+    page = client.get(f"/journeys?edit={journey['id']}")
+    assert page.status_code == 200
+    assert 'href="/journeys" aria-current="page"' in page.text
+    assert "Old searchable title" in page.text
+    assert "<script>alert(1)</script>" not in page.text
+    payload = json.loads(
+        re.search(r'<script type="application/json" id="journey-data">(.*?)</script>', page.text, re.S).group(1)
+    )
+    assert payload["journeys"][0]["hidden"] is True
+    assert payload["journeys"][0]["member_count"] == 4
+    assert {item["original_id"] for item in payload["candidates"]} == {"MS5", "MS6"}
+    assert client.get("/?view=hidden").text.count(f'href="/journeys?edit={journey["id"]}"') == 1
+    assert client.get("/journeys?edit=invalid").status_code == 404
+    body = {
+        "ordered_original_ids": ["MS5", "MS4", "MS3", "MS2", "MS1"],
+        "expected_revision": payload["journeys"][0]["revision"],
+    }
+    url = f"/api/journeys/{journey['id']}/order"
+    assert client.put(url, json=body).status_code == 403
+    result = client.put(url, json=body, headers={"X-CSRF-Token": csrf})
+    assert result.status_code == 200
+    assert [item["original_id"] for item in result.json()["journey"]["members"]] == ["MS1", "MS2", "MS3", "MS4", "MS5"]
+    assert result.json()["journey"]["representative"]["original_id"] == "MS5"
+    assert client.put(url, json=body, headers={"X-CSRF-Token": csrf}).status_code == 409
+    assert client.get(f"/api/journeys/{journey['id']}").json()["journey"]["member_count"] == 5
+    other = TestClient(app)
+    html_login(other, "other@example.test")
+    assert other.get(f"/journeys?edit={journey['id']}").status_code == 404
+    assert other.put(url, json=body, headers={"X-CSRF-Token": session_csrf(other)}).status_code == 404
+    admin = TestClient(app)
+    html_login(admin, "admin@example.test")
+    assert admin.get("/journeys", follow_redirects=False).headers["location"] == "/admin/users"
+    assert client.delete(f"/api/journeys/{journey['id']}").status_code == 403
+    assert client.delete(f"/api/journeys/{journey['id']}", headers={"X-CSRF-Token": csrf}).status_code == 200
+    assert repo.hidden_ids(owner) == {"MS2"}
+    assert len(repo.latest_manuscripts(owner, visibility="all")) == 6

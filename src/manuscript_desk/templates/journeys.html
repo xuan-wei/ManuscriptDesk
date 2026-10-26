@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}投稿历程管理 · {{ app_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/ui/journeys.css">{% endblock %}
+{% block page_title %}投稿历程管理{% endblock %}
+{% block page_description %}<p>向已有历程添加不同标题的投稿，或新建历程。不会自动合并两条已有历程。</p>{% endblock %}
+{% block page_actions %}<button type="button" class="app-button" id="journey-new">新建历程</button>{% endblock %}
+{% block content %}
+<div class="journeys-layout">
+  <section class="journey-panel" aria-labelledby="journey-list-heading">
+    <h2 id="journey-list-heading">全部投稿历程</h2>
+    <label for="journey-search">搜索已有历程（所有成员标题、期刊、编号）</label>
+    <input id="journey-search" type="search" autocomplete="off">
+    <label for="journey-visibility">显示范围</label>
+    <select id="journey-visibility"><option value="all">全部（含已完成、隐藏）</option><option value="visible">不含隐藏投稿</option><option value="hidden">含隐藏投稿</option></select>
+    <ul id="journey-list" class="journey-list"></ul>
+  </section>
+  <section class="journey-panel" aria-labelledby="journey-editor-heading">
+    <h2 id="journey-editor-heading">选择已有历程，或新建历程</h2>
+    <p>按每次投稿的首次提交日期自动排列：从早到晚。未知日期标为“日期未知”并排在已知日期之前；同日期按投稿标识稳定排序。最近已知提交日期决定代表标题、期刊和状态；全部未知时按标识确定。</p>
+    <div id="journey-editor" hidden>
+      <p id="journey-count" aria-live="polite"></p>
+      <h3>投稿顺序（自动）</h3>
+      <ol id="journey-members" class="journey-list"></ol>
+      <p>移除仅在保存后解除归组，不删除投稿及历史。少于两次投稿不能保存，可选择解散历程。</p>
+      <h3>添加未归组投稿</h3>
+      <label for="journey-candidate-search">搜索可添加投稿</label>
+      <input id="journey-candidate-search" type="search" autocomplete="off">
+      <div id="journey-candidates" class="journey-candidates"></div>
+      <h3>保存后代表内容</h3><p id="journey-preview" aria-live="polite"></p>
+      <div class="journey-actions">
+        <button type="button" class="app-button" id="journey-save">保存历程</button>
+        <button type="button" class="app-button app-button-secondary" id="journey-cancel">取消</button>
+        <button type="button" class="app-button app-button-secondary" id="journey-dissolve" hidden>解散历程</button>
+      </div>
+    </div>
+    <p id="journey-feedback" role="status" aria-live="polite"></p>
+    <button type="button" class="app-button app-button-secondary" id="journey-reload" hidden>重新加载最新历程</button>
+  </section>
+</div>
+<script type="application/json" id="journey-data">{{ {'journeys': journeys, 'candidates': candidates, 'selected_id': selected_id} | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="/static/ui/journeys.js" defer></script>{% endblock %}

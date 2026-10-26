@@ -1,7 +1,7 @@
 import json
 import secrets
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -9,6 +9,7 @@ from typing import Any
 from .automation_summaries import project_automation_summary
 from .schema import assert_schema, connect
 from .security import normalize_email, normalize_username, token_hash
+from .submission_dates import annotate_submission_date, submission_order_key
 from .timezones import DEFAULT_TIMEZONE, validate_timezone
 
 
@@ -459,9 +460,9 @@ class Repository:
             )
         return len(manuscripts)
 
-    def _latest_submission_rows(self, owner_user_id: int) -> list[dict]:
+    def _latest_submission_rows(self, owner_user_id: int, *, connection=None) -> list[dict]:
         require_owner(owner_user_id)
-        with self.connection() as conn:
+        with nullcontext(connection) if connection is not None else self.connection() as conn:
             rows = conn.execute(
                 """SELECT r.*,COALESCE(j.short_name,'') AS short_name,
                           COALESCE(
@@ -528,6 +529,7 @@ class Repository:
             items = [dict(row) for row in rows]
             for item in items:
                 item["submitted_date"] = item.pop("first_submitted_date", "")
+                annotate_submission_date(item)
             return items
 
     def latest_manuscripts(self, owner_user_id: int, *, visibility: str = "visible") -> list[dict]:
@@ -665,6 +667,11 @@ class Repository:
         ids = self._validate_original_ids(original_ids, minimum=2)
         with self.connection(immediate=True) as conn:
             self._validate_owned_submissions(conn, owner_user_id, ids)
+            # Normalize writes too; reads re-sort so tracker date updates need no migration.
+            rows_by_id = {
+                row["original_id"]: row for row in self._latest_submission_rows(owner_user_id, connection=conn)
+            }
+            ids.sort(key=lambda original_id: submission_order_key(rows_by_id[original_id]))
             placeholders = ",".join("?" for _ in ids)
             grouped = conn.execute(
                 f"""SELECT original_id FROM submission_journey_members
@@ -723,6 +730,9 @@ class Repository:
             members.append(item)
         if not members:
             return None
+        members.sort(key=submission_order_key)
+        for position, member in enumerate(members):
+            member["position"] = position
         representative = dict(members[-1])
         return {
             "id": journey["id"],
@@ -765,6 +775,11 @@ class Repository:
                 )
             ]
             self._validate_owned_submissions(conn, owner_user_id, ids)
+            # Normalize writes too; reads re-sort so tracker date updates need no migration.
+            rows_by_id = {
+                row["original_id"]: row for row in self._latest_submission_rows(owner_user_id, connection=conn)
+            }
+            ids.sort(key=lambda original_id: submission_order_key(rows_by_id[original_id]))
             placeholders = ",".join("?" for _ in ids)
             conflict = conn.execute(
                 f"""SELECT original_id FROM submission_journey_members
@@ -979,10 +994,15 @@ class Repository:
         )
         return cards
 
+    @staticmethod
+    def is_ongoing_card(card: dict[str, Any]) -> bool:
+        return card["representative"].get("status") in {"Under Review", "Revision"} or card["unread_count"] > 0
+
     def manuscript_card_statistics(self, owner_user_id: int, *, view: str = "visible") -> dict[str, int]:
         cards = self.manuscript_cards(owner_user_id, view=view)
         submissions = sum(card["member_count"] for card in cards)
-        ongoing_cards = sum(card["representative"].get("status") in {"Under Review", "Revision"} for card in cards)
+        ongoing_cards = sum(self.is_ongoing_card(card) for card in cards)
+        # Submission counts describe active review/revision, not unread decisions.
         ongoing_submissions = sum(
             member.get("status") in {"Under Review", "Revision"} for card in cards for member in card["members"]
         )
@@ -1136,7 +1156,7 @@ class Repository:
             "accepted": sum(item["status"] == "Accept" for item in items),
             "under_review": sum(item["status"] == "Under Review" for item in items),
             "revision": sum(item["status"] == "Revision" for item in items),
-            "ongoing": sum(item["status"] in {"Under Review", "Revision"} for item in items),
+            "ongoing": sum(self.is_ongoing_card(card) for card in cards),
         }
 
     def log_query(

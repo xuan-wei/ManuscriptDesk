@@ -1503,7 +1503,7 @@ def install_ui(
         if view == "starred":
             cards = [card for card in cards if card["starred_count"]]
         elif view == "ongoing":
-            cards = [card for card in cards if card["representative"].get("status") in {"Under Review", "Revision"}]
+            cards = [card for card in cards if repository.is_ongoing_card(card)]
         manuscripts = []
         for card in cards:
             item = dict(card["representative"])
@@ -1536,8 +1536,32 @@ def install_ui(
             journal_configs=journal_configs,
             scheduler_status=scheduler_status,
             workspace_view=view,
-            available_manuscripts=repository.ungrouped_manuscripts(owner),
             current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    @app.get("/journeys", response_class=HTMLResponse)
+    async def journeys_page(request: Request):
+        session = get_session(request)
+        if not session:
+            return redirect("/login")
+        if session["is_admin"]:
+            return redirect("/admin/users")
+        edit = request.query_params.get("edit")
+        selected_id = None
+        if edit is not None:
+            try:
+                selected_id = int(edit)
+            except ValueError:
+                return HTMLResponse("submission journey not found", status_code=404)
+            if selected_id <= 0 or not repository.submission_journey(session["user_id"], selected_id):
+                return HTMLResponse("submission journey not found", status_code=404)
+        return render(
+            "journeys.html",
+            request,
+            session,
+            journeys=repository.list_submission_journeys(session["user_id"]),
+            candidates=repository.ungrouped_manuscripts(session["user_id"]),
+            selected_id=selected_id,
         )
 
     @app.get("/config", response_class=HTMLResponse)
